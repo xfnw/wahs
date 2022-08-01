@@ -1,0 +1,9 @@
+[package]
+name = "wars"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+warc = "0.3.1"
+rouille = "3.5.0"
+
