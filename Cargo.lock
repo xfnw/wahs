@@ -727,6 +727,7 @@ dependencies = [
 name = "wars"
 version = "0.1.0"
 dependencies = [
+ "libflate",
  "rouille",
  "warc",
 ]
