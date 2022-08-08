@@ -6,19 +6,42 @@ use warc::WarcHeader;
 use warc::WarcReader;
 
 extern crate libflate;
+use libflate::gzip::MultiDecoder;
 use std::env::args;
-use std::process::exit;
 use std::fs::File;
 use std::io::BufReader;
-use libflate::gzip::MultiDecoder;
+use std::process::exit;
 
-fn search_warc(warc: WarcReader<BufReader<MultiDecoder<BufReader<File>>>>, url: &str) {
+fn rem_last(value: &str) -> &str {
+    let mut chars = value.chars();
+    chars.next_back();
+    chars.as_str()
+}
+
+fn search_warc(
+    warc: WarcReader<BufReader<MultiDecoder<BufReader<File>>>>,
+    url: &str,
+) -> Result<String, ()> {
     for record in warc.iter_records() {
-        match record {
-            Ok(record) => {},
-            Err(e) => eprintln!("error: {}",e)
-        }
+        let record = match record {
+            Ok(record) => record,
+            Err(e) => {
+                eprintln!("error: {}", e);
+                continue;
+            }
+        };
+        match record.header(WarcHeader::TargetURI) {
+            Some(h) if rem_last(&h).ends_with(&url) => {
+                let body = match std::str::from_utf8(&record.body()) {
+                    Ok(h) => Ok(h.to_string()),
+                    Err(_) => continue,
+                };
+                return body;
+            }
+            _ => (),
+        };
     }
+    return Err(());
 }
 
 fn main() {
@@ -32,7 +55,7 @@ fn main() {
 
     let file = WarcReader::from_path_gzip(filename).expect("failed to read warc file");
 
-    search_warc(file, "meow");
+    search_warc(file, "png");
 
     rouille::start_server("localhost:8000", move |request| {
         println!("{:?}", request.url());
