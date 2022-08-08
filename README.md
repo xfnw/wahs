@@ -1,5 +1,5 @@
 # wars
 serve warc files on http
 
-currently nonfunctional
+semi-works, but the content type is screwed so css breaks
 
