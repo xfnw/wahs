@@ -7,6 +7,7 @@ use warc::WarcReader;
 
 extern crate libflate;
 use libflate::gzip::MultiDecoder;
+use std::borrow::Cow;
 use std::env::args;
 use std::fs::File;
 use std::io::BufReader;
@@ -18,10 +19,32 @@ fn rem_last(value: &str) -> &str {
     chars.as_str()
 }
 
+fn chop_off_headers(value: &[u8]) -> Vec<u8> {
+    let newline: &u8 = &0x0A;
+    let carrage: &u8 = &0x0D;
+    let mut prev: &u8 = &0x00;
+    let mut anotherprev: &u8 = &0x00;
+    let mut done = false;
+    let mut newvec = Vec::new();
+    for ch in value.iter() {
+        if done {
+            newvec.push(ch.clone())
+        } else {
+            if ch == newline && anotherprev == newline && prev == carrage {
+                done = true;
+            }
+            anotherprev = prev;
+            prev = ch;
+        }
+    }
+    let newvec: Vec<u8> = newvec;
+    return newvec;
+}
+
 fn search_warc(
     warc: WarcReader<BufReader<MultiDecoder<BufReader<File>>>>,
-    url: &str,
-) -> Result<String, ()> {
+    url: String,
+) -> Result<(String, Vec<u8>), ()> {
     for record in warc.iter_records() {
         let record = match record {
             Ok(record) => record,
@@ -33,14 +56,13 @@ fn search_warc(
         match record.header(WarcHeader::WarcType) {
             Some(rtype) if rtype.eq("response") => match record.header(WarcHeader::TargetURI) {
                 Some(h) if rem_last(&h).ends_with(&url) => {
-                    let body = match std::str::from_utf8(&record.body()) {
-                        Ok(h) => Ok(h.to_string()),
-                        Err(e) => {
-                            println!("{:?}", e);
-                            continue;
+                    match &record.header(WarcHeader::ContentType) {
+                        Some(ctype) => {
+                            let body = chop_off_headers(record.body());
+                            return Ok((ctype.to_string(), body));
                         }
-                    };
-                    return body;
+                        None => eprintln!("error could not read ContentType"),
+                    }
                 }
                 _ => (),
             },
@@ -70,8 +92,8 @@ fn main() {
                 return Response::text("hello world");
             }
         }
-        match search_warc(file, &request.url()) {
-            Ok(body) => return Response::text(body),
+        match search_warc(file, request.url()) {
+            Ok((ctype, body)) => return Response::from_data("text/html", body),
             Err(_) => {
                 return Response::html(
                     "<h1>error: 404 not found</h1>\n\
