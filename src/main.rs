@@ -83,7 +83,7 @@ fn main() {
 
     rouille::start_server("localhost:8000", move |request| {
         // FIXME: very slow :(
-        // maybe access with an Arc?
+        // maybe read earlier and then access with an Arc?
         let file = WarcReader::from_path_gzip(&filename).expect("failed to read warc file");
 
         println!("{:?}", request.url());
@@ -93,6 +93,11 @@ fn main() {
             }
         }
         match search_warc(file, request.url()) {
+            // FIXME: turns out WarcHeader::ContentType is just a weird warc type and not
+            // the actual response's type :(
+            // looks like i will have to parse the http headers instead of just
+            // cutting them off and throwing them into the void.
+            // also having the incorrect content type breaks css, for some reason
             Ok((ctype, body)) => return Response::from_data("text/html", body),
             Err(_) => {
                 return Response::html(
