@@ -7,7 +7,6 @@ use warc::WarcReader;
 
 extern crate libflate;
 use libflate::gzip::MultiDecoder;
-use std::borrow::Cow;
 use std::env::args;
 use std::fs::File;
 use std::io::BufReader;
@@ -28,7 +27,7 @@ fn chop_off_headers(value: &[u8]) -> Vec<u8> {
     let mut newvec = Vec::new();
     for ch in value.iter() {
         if done {
-            newvec.push(ch.clone())
+            newvec.push(*ch)
         } else {
             if ch == newline && anotherprev == newline && prev == carrage {
                 done = true;
@@ -37,8 +36,8 @@ fn chop_off_headers(value: &[u8]) -> Vec<u8> {
             prev = ch;
         }
     }
-    let newvec: Vec<u8> = newvec;
-    return newvec;
+
+    newvec as Vec<u8>
 }
 
 fn search_warc(
@@ -69,14 +68,14 @@ fn search_warc(
             _ => (),
         };
     }
-    return Err(());
+    Err(())
 }
 
 fn main() {
     let filename = match args().nth(1) {
-        Some(h) => h.to_string(),
+        Some(h) => h,
         None => {
-            eprintln!("usage: {} file", args().nth(0).expect("bap."));
+            eprintln!("usage: {} file", args().next().expect("bap."));
             exit(1);
         }
     };
@@ -98,13 +97,11 @@ fn main() {
             // looks like i will have to parse the http headers instead of just
             // cutting them off and throwing them into the void.
             // also having the incorrect content type breaks css, for some reason
-            Ok((ctype, body)) => return Response::from_data("text/html", body),
-            Err(_) => {
-                return Response::html(
-                    "<h1>error: 404 not found</h1>\n\
+            Ok((ctype, body)) => Response::from_data("text/html", body),
+            Err(_) => Response::html(
+                "<h1>error: 404 not found</h1>\n\
                     the page you requested is not part of this warc file.",
-                )
-            }
-        };
+            ),
+        }
     });
 }
