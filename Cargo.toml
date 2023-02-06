@@ -5,6 +5,6 @@ edition = "2021"
 
 [dependencies]
 warc = "0.3.1"
-rouille = "3.5.0"
+rouille = "3.6.1"
 libflate = "1.2.0"
 
