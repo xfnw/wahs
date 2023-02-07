@@ -52,16 +52,22 @@ fn search_warc(
                 continue;
             }
         };
+        // FIXME: turns out WarcHeader::ContentType is just a weird warc type and not
+        // the actual response's type :(
+        // looks like i will have to parse the http headers instead of just
+        // cutting them off and throwing them into the void.
+        // also having the incorrect content type breaks css, for some reason
         match record.header(WarcHeader::WarcType) {
             Some(rtype) if rtype.eq("response") => match record.header(WarcHeader::TargetURI) {
                 Some(h) if rem_last(&h).ends_with(&url) => {
-                    match &record.header(WarcHeader::ContentType) {
-                        Some(ctype) => {
-                            let body = chop_off_headers(record.body());
-                            return Ok((ctype.to_string(), body));
-                        }
-                        None => eprintln!("error could not read ContentType"),
-                    }
+                    //match &record.header(WarcHeader::ContentType) {
+                    //    Some(ctype) => {
+                    let body = chop_off_headers(record.body());
+                    return Ok(("text/html".to_string(), body));
+                    //        return Ok((ctype.to_string(), body));
+                    //    }
+                    //    None => eprintln!("error could not read ContentType"),
+                    //}
                 }
                 _ => (),
             },
@@ -92,12 +98,7 @@ fn main() {
             }
         }
         match search_warc(file, request.url()) {
-            // FIXME: turns out WarcHeader::ContentType is just a weird warc type and not
-            // the actual response's type :(
-            // looks like i will have to parse the http headers instead of just
-            // cutting them off and throwing them into the void.
-            // also having the incorrect content type breaks css, for some reason
-            Ok((ctype, body)) => Response::from_data("text/html", body),
+            Ok((ctype, body)) => Response::from_data(ctype, body),
             Err(_) => Response::html(
                 "<h1>error: 404 not found</h1>\n\
                     the page you requested is not part of this warc file.",
