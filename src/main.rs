@@ -18,18 +18,20 @@ fn rem_last(value: &str) -> &str {
     chars.as_str()
 }
 
-fn chop_off_headers(value: &[u8]) -> Vec<u8> {
-    let newline: &u8 = &0x0A;
-    let carrage: &u8 = &0x0D;
+fn separate_content(request: &[u8]) -> (String, Vec<u8>) {
+    const NL: &u8 = &0x0A;
+    const CR: &u8 = &0x0D;
+    const SP: &u8 = &0x20;
+    const CL: &u8 = &0x3A;
     let mut prev: &u8 = &0x00;
     let mut anotherprev: &u8 = &0x00;
     let mut done = false;
     let mut newvec = Vec::new();
-    for ch in value.iter() {
+    for ch in request.iter() {
         if done {
             newvec.push(*ch)
         } else {
-            if ch == newline && anotherprev == newline && prev == carrage {
+            if ch == NL && anotherprev == NL && prev == CR {
                 done = true;
             }
             anotherprev = prev;
@@ -37,7 +39,8 @@ fn chop_off_headers(value: &[u8]) -> Vec<u8> {
         }
     }
 
-    newvec as Vec<u8>
+    let content_type = "text/html".to_string();
+    (content_type, newvec as Vec<u8>)
 }
 
 fn search_warc(
@@ -62,8 +65,8 @@ fn search_warc(
                 Some(h) if rem_last(&h).ends_with(&url) => {
                     //match &record.header(WarcHeader::ContentType) {
                     //    Some(ctype) => {
-                    let body = chop_off_headers(record.body());
-                    return Ok(("text/html".to_string(), body));
+                    let (content_type, body) = separate_content(record.body());
+                    return Ok((content_type, body));
                     //        return Ok((ctype.to_string(), body));
                     //    }
                     //    None => eprintln!("error could not read ContentType"),
