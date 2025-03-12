@@ -1,16 +1,10 @@
-extern crate rouille;
 use rouille::Response;
-
-extern crate warc;
-use warc::WarcHeader;
-use warc::WarcReader;
-
-extern crate libflate;
-use libflate::gzip::MultiDecoder;
 use std::env::args;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::BufRead;
 use std::process::exit;
+use warc::WarcHeader;
+use warc::WarcReader;
 
 fn rem_last(value: &str) -> &str {
     let mut chars = value.chars();
@@ -43,10 +37,7 @@ fn separate_content(request: &[u8]) -> (String, Vec<u8>) {
     (content_type, newvec as Vec<u8>)
 }
 
-fn search_warc(
-    warc: WarcReader<BufReader<MultiDecoder<BufReader<File>>>>,
-    url: String,
-) -> Result<(String, Vec<u8>), ()> {
+fn search_warc<T: BufRead>(warc: WarcReader<T>, url: String) -> Result<(String, Vec<u8>), ()> {
     for record in warc.iter_records() {
         let record = match record {
             Ok(record) => record,
