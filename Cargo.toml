@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 warc = "0.4"
 rouille = "3.6.1"
+httparse = "1.10.1"

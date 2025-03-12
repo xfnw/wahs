@@ -954,6 +954,7 @@ dependencies = [
 name = "wars"
 version = "0.1.0"
 dependencies = [
+ "httparse",
  "rouille",
  "warc",
 ]

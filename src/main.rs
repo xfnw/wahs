@@ -1,6 +1,5 @@
 use rouille::Response;
 use std::env::args;
-use std::fs::File;
 use std::io::BufRead;
 use std::process::exit;
 use warc::WarcHeader;
@@ -13,28 +12,21 @@ fn rem_last(value: &str) -> &str {
 }
 
 fn separate_content(request: &[u8]) -> (String, Vec<u8>) {
-    const NL: &u8 = &0x0A;
-    const CR: &u8 = &0x0D;
-    const SP: &u8 = &0x20;
-    const CL: &u8 = &0x3A;
-    let mut prev: &u8 = &0x00;
-    let mut anotherprev: &u8 = &0x00;
-    let mut done = false;
-    let mut newvec = Vec::new();
-    for ch in request.iter() {
-        if done {
-            newvec.push(*ch)
-        } else {
-            if ch == NL && anotherprev == NL && prev == CR {
-                done = true;
-            }
-            anotherprev = prev;
-            prev = ch;
-        }
-    }
+    let mut headers = [httparse::EMPTY_HEADER; 256];
+    let mut res = httparse::Response::new(&mut headers);
+    let Ok(httparse::Status::Complete(boffset)) = res.parse(request) else {
+        panic!("thats too many headers");
+    };
+    let content_type = String::from_utf8(
+        headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("content-type"))
+            .map_or_else(|| b"text/html".to_vec(), |h| h.value.to_vec()),
+    )
+    .unwrap();
+    let body = request[boffset..].to_vec();
 
-    let content_type = "text/html".to_string();
-    (content_type, newvec as Vec<u8>)
+    (content_type, body)
 }
 
 fn search_warc<T: BufRead>(warc: WarcReader<T>, url: String) -> Result<(String, Vec<u8>), ()> {
@@ -46,22 +38,12 @@ fn search_warc<T: BufRead>(warc: WarcReader<T>, url: String) -> Result<(String, 
                 continue;
             }
         };
-        // FIXME: turns out WarcHeader::ContentType is just a weird warc type and not
-        // the actual response's type :(
-        // looks like i will have to parse the http headers instead of just
-        // cutting them off and throwing them into the void.
-        // also having the incorrect content type breaks css, for some reason
+
         match record.header(WarcHeader::WarcType) {
             Some(rtype) if rtype.eq("response") => match record.header(WarcHeader::TargetURI) {
                 Some(h) if rem_last(&h).ends_with(&url) => {
-                    //match &record.header(WarcHeader::ContentType) {
-                    //    Some(ctype) => {
                     let (content_type, body) = separate_content(record.body());
                     return Ok((content_type, body));
-                    //        return Ok((ctype.to_string(), body));
-                    //    }
-                    //    None => eprintln!("error could not read ContentType"),
-                    //}
                 }
                 _ => (),
             },
