@@ -938,6 +938,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wahs"
+version = "0.1.0"
+dependencies = [
+ "httparse",
+ "rouille",
+ "warc",
+]
+
+[[package]]
 name = "warc"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -948,15 +957,6 @@ dependencies = [
  "nom",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "wars"
-version = "0.1.0"
-dependencies = [
- "httparse",
- "rouille",
- "warc",
 ]
 
 [[package]]
