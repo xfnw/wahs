@@ -6,17 +6,23 @@ use std::process::exit;
 use warc::WarcHeader;
 use warc::WarcReader;
 
+enum WarcPage {
+    Found(String, Vec<u8>),
+    ParseError,
+    NotFound,
+}
+
 fn rem_last(value: &str) -> &str {
     let mut chars = value.chars();
     chars.next_back();
     chars.as_str()
 }
 
-fn separate_content(request: &[u8]) -> (String, Vec<u8>) {
+fn separate_content(request: &[u8]) -> Option<(String, Vec<u8>)> {
     let mut headers = [httparse::EMPTY_HEADER; 256];
     let mut res = httparse::Response::new(&mut headers);
     let Ok(httparse::Status::Complete(boffset)) = res.parse(request) else {
-        panic!("thats too many headers");
+        return None;
     };
     let content_type = String::from_utf8(
         headers
@@ -27,10 +33,10 @@ fn separate_content(request: &[u8]) -> (String, Vec<u8>) {
     .unwrap();
     let body = request[boffset..].to_vec();
 
-    (content_type, body)
+    Some((content_type, body))
 }
 
-fn search_warc<T: BufRead>(warc: WarcReader<T>, url: String) -> Result<(String, Vec<u8>), ()> {
+fn search_warc<T: BufRead>(warc: WarcReader<T>, url: String) -> WarcPage {
     for record in warc.iter_records() {
         let record = match record {
             Ok(record) => record,
@@ -43,15 +49,17 @@ fn search_warc<T: BufRead>(warc: WarcReader<T>, url: String) -> Result<(String, 
         match record.header(WarcHeader::WarcType) {
             Some(rtype) if rtype.eq("response") => match record.header(WarcHeader::TargetURI) {
                 Some(h) if rem_last(&h).ends_with(&url) => {
-                    let (content_type, body) = separate_content(record.body());
-                    return Ok((content_type, body));
+                    let Some((content_type, body)) = separate_content(record.body()) else {
+                        return WarcPage::ParseError;
+                    };
+                    return WarcPage::Found(content_type, body);
                 }
                 _ => (),
             },
             _ => (),
         };
     }
-    Err(())
+    WarcPage::NotFound
 }
 
 fn main() {
@@ -68,12 +76,20 @@ fn main() {
 
         println!("{:?}", request.url());
         match search_warc(file, request.url()) {
-            Ok((ctype, body)) => Response::from_data(ctype, body),
-            Err(_) => Response {
+            WarcPage::Found(ctype, body) => Response::from_data(ctype, body),
+            WarcPage::NotFound => Response {
                 status_code: 404,
                 headers: vec![("Content-Type".into(), "text/html".into())],
                 data: ResponseBody::from_data(
                     "<h1>404 not found</h1>\nthe file you requested is not part of this warc file.",
+                ),
+                upgrade: None,
+            },
+            WarcPage::ParseError => Response {
+                status_code: 500,
+                headers: vec![("Content-Type".into(), "text/html".into())],
+                data: ResponseBody::from_data(
+                    "<h1>500 internal server error</h1>\ntheres probably too many headers on this page.",
                 ),
                 upgrade: None,
             },
