@@ -85,22 +85,8 @@ fn main() {
                 data: ResponseBody::from_data(body),
                 upgrade: None,
             },
-            WarcPage::NotFound => Response {
-                status_code: 404,
-                headers: vec![("Content-Type".into(), "text/html".into())],
-                data: ResponseBody::from_data(
-                    "<h1>404 not found</h1>\nthe file you requested is not part of this warc file.",
-                ),
-                upgrade: None,
-            },
-            WarcPage::ParseError => Response {
-                status_code: 500,
-                headers: vec![("Content-Type".into(), "text/html".into())],
-                data: ResponseBody::from_data(
-                    "<h1>500 internal server error</h1>\ntheres probably too many headers on this page.",
-                ),
-                upgrade: None,
-            },
+            WarcPage::NotFound => Response::html("<h1>404 not found</h1>\nthe file you requested is not part of this warc file.").with_status_code(404),
+            WarcPage::ParseError => Response::html("<h1>500 internal server error</h1>\ntheres probably too many headers on this page.").with_status_code(500),
         }
     });
 }
