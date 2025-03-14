@@ -8,6 +8,7 @@ use warc::WarcReader;
 
 enum WarcPage {
     Found(String, Vec<u8>),
+    NoType(Vec<u8>),
     ParseError,
     NotFound,
 }
@@ -18,19 +19,17 @@ fn rem_last(value: &str) -> &str {
     chars.as_str()
 }
 
-fn separate_content(request: &[u8]) -> Option<(String, Vec<u8>)> {
+fn separate_content(request: &[u8]) -> Option<(Option<String>, Vec<u8>)> {
     let mut headers = [httparse::EMPTY_HEADER; 256];
     let mut res = httparse::Response::new(&mut headers);
     let Ok(httparse::Status::Complete(boffset)) = res.parse(request) else {
         return None;
     };
-    let content_type = String::from_utf8(
-        headers
-            .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("content-type"))
-            .map_or_else(|| b"text/html".to_vec(), |h| h.value.to_vec()),
-    )
-    .unwrap();
+    let content_type = headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("content-type"))
+        .map(|h| h.value.to_vec())
+        .and_then(|v| String::from_utf8(v).ok());
     let body = request[boffset..].to_vec();
 
     Some((content_type, body))
@@ -51,6 +50,9 @@ fn search_warc<T: BufRead>(warc: WarcReader<T>, url: String) -> WarcPage {
                 Some(h) if rem_last(&h).ends_with(&url) => {
                     let Some((content_type, body)) = separate_content(record.body()) else {
                         return WarcPage::ParseError;
+                    };
+                    let Some(content_type) = content_type else {
+                        return WarcPage::NoType(body);
                     };
                     return WarcPage::Found(content_type, body);
                 }
@@ -77,6 +79,12 @@ fn main() {
         println!("{:?}", request.url());
         match search_warc(file, request.url()) {
             WarcPage::Found(ctype, body) => Response::from_data(ctype, body),
+            WarcPage::NoType(body) => Response {
+                status_code: 200,
+                headers: vec![],
+                data: ResponseBody::from_data(body),
+                upgrade: None,
+            },
             WarcPage::NotFound => Response {
                 status_code: 404,
                 headers: vec![("Content-Type".into(), "text/html".into())],
