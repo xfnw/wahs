@@ -63,16 +63,9 @@ fn main() {
     };
 
     rouille::start_server("localhost:8000", move |request| {
-        // FIXME: very slow :(
-        // maybe read earlier and then access with an Arc?
         let file = WarcReader::from_path_gzip(&filename).expect("failed to read warc file");
 
         println!("{:?}", request.url());
-        {
-            if request.url() == "/hello" {
-                return Response::text("hello world");
-            }
-        }
         match search_warc(file, request.url()) {
             Ok((ctype, body)) => Response::from_data(ctype, body),
             Err(_) => Response::html(
