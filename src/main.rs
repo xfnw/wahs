@@ -1,4 +1,5 @@
 use rouille::Response;
+use rouille::ResponseBody;
 use std::env::args;
 use std::io::BufRead;
 use std::process::exit;
@@ -68,10 +69,14 @@ fn main() {
         println!("{:?}", request.url());
         match search_warc(file, request.url()) {
             Ok((ctype, body)) => Response::from_data(ctype, body),
-            Err(_) => Response::html(
-                "<h1>error: 404 not found</h1>\n\
-                    the page you requested is not part of this warc file.",
-            ),
+            Err(_) => Response {
+                status_code: 404,
+                headers: vec![("Content-Type".into(), "text/html".into())],
+                data: ResponseBody::from_data(
+                    "<h1>404 not found</h1>\nthe file you requested is not part of this warc file.",
+                ),
+                upgrade: None,
+            },
         }
     });
 }
