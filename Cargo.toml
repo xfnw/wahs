@@ -2,8 +2,12 @@
 name = "wahs"
 version = "0.1.0"
 edition = "2021"
+default-run = "wahs"
 
 [dependencies]
 warc = "0.4"
 rouille = "3.6.1"
 httparse = "1.10.1"
+
+[[bin]]
+name = "gencdx"
