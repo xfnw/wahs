@@ -6,8 +6,10 @@ default-run = "wahs"
 
 [dependencies]
 warc = "0.4"
-rouille = "3.6.1"
 httparse = "1.10.1"
+axum = { version = "0.8.6", default-features = false, features = ["http1", "tokio"] }
+argh = { version = "0.1.13", default-features = false, features = ["help"] }
+tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "sync"] }
 
 [[bin]]
 name = "gencdx"
