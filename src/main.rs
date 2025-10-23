@@ -6,6 +6,7 @@ use axum::{
     routing::get,
     Router,
 };
+use mimalloc::MiMalloc;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -21,6 +22,9 @@ use tokio::{
     sync::RwLock,
     time::sleep,
 };
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 /// serve warc files on http
 #[derive(Debug, FromArgs)]
