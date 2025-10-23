@@ -1,16 +1,26 @@
 use argh::FromArgs;
 use axum::{
-    extract::{Path, RawQuery, State},
+    extract::{Path as PathExtract, RawQuery, State},
     response::Html,
     response::IntoResponse,
     routing::get,
     Router,
 };
 use std::{
-    collections::BTreeMap, fmt::Write, mem::replace, net::SocketAddr, path::PathBuf, sync::Arc,
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::RwLock, time::sleep};
+use tokio::{
+    fs::File,
+    io::{AsyncBufReadExt, BufReader},
+    net::TcpListener,
+    sync::RwLock,
+    time::sleep,
+};
 
 /// serve warc files on http
 #[derive(Debug, FromArgs)]
@@ -77,7 +87,7 @@ fn process_timestamp(inp: &str) -> u64 {
 
 async fn from_warc(
     State(state): State<Arc<AppState>>,
-    Path((timestamp, path_url)): Path<(String, String)>,
+    PathExtract((timestamp, path_url)): PathExtract<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> impl IntoResponse {
     let mut requested_url = path_url;
@@ -89,7 +99,68 @@ async fn from_warc(
     format!("{requested_url} at {timestamp}")
 }
 
+async fn read_cdx(
+    cdxname: &Path,
+    map: &mut BTreeMap<String, BTreeMap<u64, Arc<PathBuf>>>,
+    dedup: &mut BTreeSet<Arc<PathBuf>>,
+) -> Result<(), &'static str> {
+    let parent = cdxname.parent().ok_or("no parent")?;
+    let file = BufReader::new(
+        File::open(cdxname)
+            .await
+            .map_err(|_| "could not open file")?,
+    );
+    let mut lines = file.lines();
+
+    let Ok(Some(header)) = lines.next_line().await else {
+        return Err("could not read cdx header");
+    };
+    let mut header = header
+        .split(' ')
+        .skip_while(|&s| s != "CDX")
+        .skip(1)
+        .enumerate();
+    let (url, _) = header
+        .clone()
+        .find(|(_, c)| *c == "a")
+        .ok_or("no `a` url column in header")?;
+    let (date, _) = header
+        .clone()
+        .find(|(_, c)| *c == "b")
+        .ok_or("no `b` date column in header")?;
+    let (warcname, _) = header
+        .find(|(_, c)| *c == "g")
+        .ok_or("no `g` warc filename column in header")?;
+
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .map_err(|_| "bork while reading line")?
+    {
+        let columns: Vec<_> = line.split(' ').collect();
+        let &url = columns.get(url).ok_or("url field missing")?;
+        let date = columns.get(date).ok_or("date field missing")?;
+        let date = date.parse().map_err(|_| "malformed date")?;
+        let &warcname = columns.get(warcname).ok_or("warc filename field missing")?;
+        let warcname = parent.join(warcname);
+        let warcname = if let Some(w) = dedup.get(&warcname) {
+            w.clone()
+        } else {
+            let w = Arc::new(warcname);
+            dedup.insert(w.clone());
+            w
+        };
+
+        map.entry(url.to_string())
+            .or_default()
+            .insert(date, warcname);
+    }
+
+    Ok(())
+}
+
 async fn reindex(dirs: &[PathBuf]) -> (BTreeMap<String, BTreeMap<u64, Arc<PathBuf>>>, String) {
+    let mut dedup = BTreeSet::new();
     let mut map = BTreeMap::new();
     let mut log = String::new();
 
@@ -110,6 +181,12 @@ async fn reindex(dirs: &[PathBuf]) -> (BTreeMap<String, BTreeMap<u64, Arc<PathBu
             {
                 continue;
             }
+
+            if let Err(e) = read_cdx(&name, &mut map, &mut dedup).await {
+                writeln!(log, "could not index {name:?}: {e}").unwrap();
+                continue;
+            }
+
             writeln!(log, "indexed {name:?}").unwrap();
         }
 
