@@ -2,7 +2,7 @@ use argh::FromArgs;
 use axum::{
     Router,
     extract::{Path as PathExtract, RawQuery, State},
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
     routing::get,
 };
@@ -139,6 +139,13 @@ impl AppState {
         };
 
         let mut headers = HeaderMap::new();
+        for h in res.headers.iter() {
+            if let Ok(k) = HeaderName::try_from(format!("x-archive-orig-{}", h.name))
+                && let Ok(v) = HeaderValue::from_bytes(h.value)
+            {
+                headers.insert(k, v);
+            }
+        }
         if let Ok(h) = HeaderValue::from_str(&content_type) {
             headers.insert("content-type", h);
         }
