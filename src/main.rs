@@ -6,7 +6,9 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
 };
+use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
@@ -23,6 +25,7 @@ use tokio::{
     task::spawn_blocking,
     time::sleep,
 };
+use url::Url;
 use warc::{WarcHeader, WarcReader};
 
 #[global_allocator]
@@ -43,6 +46,19 @@ struct Opt {
     directory: Vec<PathBuf>,
 }
 
+const URL_UNSAFE: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'%')
+    .add(b'<')
+    .add(b'>')
+    .add(b'\\')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
+
 #[derive(Debug)]
 struct AppState {
     directories: Vec<PathBuf>,
@@ -56,6 +72,7 @@ impl AppState {
         req_url: String,
         timestamp: u64,
     ) -> Result<WarcResponse, ResponseError> {
+        let base_url = Url::parse(&req_url).map_err(ResponseError::UrlParse)?;
         let path = self
             .cdx_map
             .read()
@@ -84,10 +101,45 @@ impl AppState {
             .and_then(|v| String::from_utf8(v).ok());
         let body = &response[body_offset..];
 
+        let body = if let Some(ref ct) = content_type
+            && let ct = ct.split_once(';').map(|(s, _)| s).unwrap_or(ct)
+            // FIXME: treating xhtml like html is very naughty
+            // people are usually nice enough to make their xhtml
+            // html-compatible-ish tho
+            && (ct.eq_ignore_ascii_case("text/html")
+                || ct.eq_ignore_ascii_case("application/xhtml+xml"))
+        {
+            let mut output = vec![];
+            let mut rewriter = HtmlRewriter::new(
+                lol_html::Settings {
+                    element_content_handlers: vec![element!("[href]", |el| {
+                        let Some(href) = el.get_attribute("href") else {
+                            return Ok(());
+                        };
+                        let Ok(url) = base_url.join(&href) else {
+                            return Ok(());
+                        };
+                        let enc = utf8_percent_encode(url.as_str(), URL_UNSAFE);
+                        _ = el.set_attribute("href", &format!("/{timestamp}/{enc}"));
+                        Ok(())
+                    })],
+                    ..lol_html::Settings::new()
+                },
+                |c: &[u8]| output.extend_from_slice(c),
+            );
+
+            rewriter.write(body).map_err(ResponseError::RewriteHtml)?;
+            rewriter.end().map_err(ResponseError::RewriteHtml)?;
+
+            output
+        } else {
+            body.to_vec()
+        };
+
         Ok(WarcResponse {
             code: res.code.unwrap_or(200),
             content_type,
-            body: body.to_vec(),
+            body,
         })
     }
 }
@@ -128,18 +180,25 @@ struct WarcResponse {
 
 #[derive(Debug)]
 enum ResponseError {
+    UrlParse(url::ParseError),
     NotFound,
     TokioJoin(tokio::task::JoinError),
     HttpParse,
     OpenWarc(std::io::Error),
     RecordBody(std::io::Error),
     WarcMissing,
+    RewriteHtml(lol_html::errors::RewritingError),
 }
 
 impl fmt::Display for ResponseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "<!DOCTYPE html>")?;
         match self {
+            Self::UrlParse(parse_error) => write!(
+                f,
+                "<h1>could not parse provided url</h1>{}",
+                escape(&parse_error.to_string())
+            ),
             Self::NotFound => write!(
                 f,
                 "<h1>knot found</h1>
@@ -172,6 +231,11 @@ wahs does not canonicalize it."
                 f,
                 "<h1>warc record missing</h1>
 your cdx file says its in there, it or the warc file may be corrupted :("
+            ),
+            Self::RewriteHtml(rewrite_error) => write!(
+                f,
+                "<h1>error rewriting html</h1>{}",
+                escape(&rewrite_error.to_string())
             ),
         }
     }
