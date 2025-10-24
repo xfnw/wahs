@@ -60,30 +60,9 @@ impl AppState {
             .and_then(|b| b.range(..=timestamp).next_back())
             .map(|(_, p)| p.clone())?;
 
-        let buffered = spawn_blocking(move || {
-            let mut file = WarcReader::from_path_gzip(path.as_ref()).ok()?;
-            let mut stream_iter = file.stream_records();
-            while let Some(Ok(record)) = stream_iter.next_item() {
-                if record
-                    .header(WarcHeader::WarcType)
-                    .is_none_or(|t| t != "response")
-                {
-                    continue;
-                }
-                let Some(target) = record.header(WarcHeader::TargetURI) else {
-                    continue;
-                };
-                let target = target.strip_prefix("<").unwrap_or(&target);
-                let target = target.strip_suffix(">").unwrap_or(target);
-                if target != req_url {
-                    continue;
-                }
-                return record.into_buffered().ok();
-            }
-            None
-        })
-        .await
-        .ok()??;
+        let buffered = spawn_blocking(move || read_warc_record(&req_url, &path))
+            .await
+            .ok()??;
 
         let response = buffered.body();
         let mut headers = [httparse::EMPTY_HEADER; 256];
@@ -106,6 +85,30 @@ impl AppState {
             body: body.to_vec(),
         })
     }
+}
+
+fn read_warc_record(req_url: &str, path: &Path) -> Option<warc::Record<warc::BufferedBody>> {
+    let mut file = WarcReader::from_path_gzip(path).ok()?;
+    let mut stream_iter = file.stream_records();
+    while let Some(Ok(record)) = stream_iter.next_item() {
+        if record
+            .header(WarcHeader::WarcType)
+            .is_none_or(|t| t != "response")
+        {
+            continue;
+        }
+        let Some(target) = record.header(WarcHeader::TargetURI) else {
+            continue;
+        };
+        let target = target.strip_prefix("<").unwrap_or(&target);
+        let target = target.strip_suffix(">").unwrap_or(target);
+        if target != req_url {
+            continue;
+        }
+        return record.into_buffered().ok();
+    }
+
+    None
 }
 
 #[derive(Debug)]
