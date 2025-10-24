@@ -444,8 +444,6 @@ async fn reindex(dirs: &[PathBuf]) -> (BTreeMap<String, BTreeMap<u64, Arc<PathBu
                 writeln!(log, "could not index {name:?}: {e}").unwrap();
                 continue;
             }
-
-            writeln!(log, "indexed {name:?}").unwrap();
         }
 
         writeln!(log, "indexed directory {dirname:?}").unwrap();
