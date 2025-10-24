@@ -120,7 +120,7 @@ impl AppState {
                             let Some(href) = el.get_attribute("href") else {
                                 return Ok(());
                             };
-                            let Some(url) = mangle_url(&base_url, &href, timestamp) else {
+                            let Some(url) = mangle_url(Some(&base_url), &href, timestamp) else {
                                 return Ok(());
                             };
                             _ = el.set_attribute("href", &url);
@@ -130,7 +130,7 @@ impl AppState {
                             let Some(src) = el.get_attribute("src") else {
                                 return Ok(());
                             };
-                            let Some(url) = mangle_url(&base_url, &src, timestamp) else {
+                            let Some(url) = mangle_url(Some(&base_url), &src, timestamp) else {
                                 return Ok(());
                             };
                             _ = el.set_attribute("src", &url);
@@ -166,7 +166,7 @@ impl AppState {
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("location"))
             .and_then(|h| str::from_utf8(h.value).ok())
-            && let Some(mangled) = mangle_url(&base_url, location, timestamp)
+            && let Some(mangled) = mangle_url(Some(&base_url), location, timestamp)
             && let Ok(h) = HeaderValue::from_str(&mangled)
         {
             headers.insert("location", h);
@@ -180,8 +180,12 @@ impl AppState {
     }
 }
 
-fn mangle_url(base: &Url, join: &str, timestamp: u64) -> Option<String> {
-    let url = base.join(join).ok()?;
+fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> {
+    let url = if let Some(base) = base {
+        base.join(join).ok()
+    } else {
+        Url::parse(join).ok()
+    }?;
     let enc = utf8_percent_encode(url.as_str(), URL_UNSAFE);
     let mut ptime = timestamp.to_string();
     // surely there is a better way to do this?
