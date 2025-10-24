@@ -1,10 +1,10 @@
 use argh::FromArgs;
 use axum::{
-    extract::{Path as PathExtract, RawQuery, State},
-    response::Html,
-    response::IntoResponse,
-    routing::get,
     Router,
+    extract::{Path as PathExtract, RawQuery, State},
+    http::{HeaderMap, HeaderValue, StatusCode},
+    response::{Html, IntoResponse},
+    routing::get,
 };
 use mimalloc::MiMalloc;
 use std::{
@@ -20,8 +20,10 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::TcpListener,
     sync::RwLock,
+    task::spawn_blocking,
     time::sleep,
 };
+use warc::{WarcHeader, WarcReader};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -46,6 +48,71 @@ struct AppState {
     directories: Vec<PathBuf>,
     cdx_map: RwLock<BTreeMap<String, BTreeMap<u64, Arc<PathBuf>>>>,
     log: RwLock<String>,
+}
+
+impl AppState {
+    async fn get_warc_response(&self, req_url: String, timestamp: u64) -> Option<WarcResponse> {
+        let path = self
+            .cdx_map
+            .read()
+            .await
+            .get(&req_url)
+            .and_then(|b| b.range(..=timestamp).next_back())
+            .map(|(_, p)| p.clone())?;
+
+        let buffered = spawn_blocking(move || {
+            let mut file = WarcReader::from_path_gzip(path.as_ref()).ok()?;
+            let mut stream_iter = file.stream_records();
+            while let Some(Ok(record)) = stream_iter.next_item() {
+                if record
+                    .header(WarcHeader::WarcType)
+                    .is_none_or(|t| t != "response")
+                {
+                    continue;
+                }
+                let Some(target) = record.header(WarcHeader::TargetURI) else {
+                    continue;
+                };
+                let target = target.strip_prefix("<").unwrap_or(&target);
+                let target = target.strip_suffix(">").unwrap_or(target);
+                if target != req_url {
+                    continue;
+                }
+                return record.into_buffered().ok();
+            }
+            None
+        })
+        .await
+        .ok()??;
+
+        let response = buffered.body();
+        let mut headers = [httparse::EMPTY_HEADER; 256];
+        let mut res = httparse::Response::new(&mut headers);
+        let Ok(httparse::Status::Complete(body_offset)) = res.parse(response) else {
+            return None;
+        };
+
+        let content_type = res
+            .headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("content-type"))
+            .map(|h| h.value.to_vec())
+            .and_then(|v| String::from_utf8(v).ok());
+        let body = &response[body_offset..];
+
+        Some(WarcResponse {
+            code: res.code.unwrap_or(200),
+            content_type,
+            body: body.to_vec(),
+        })
+    }
+}
+
+#[derive(Debug)]
+struct WarcResponse {
+    code: u16,
+    content_type: Option<String>,
+    body: Vec<u8>,
 }
 
 fn escape(inp: &str) -> String {
@@ -100,7 +167,33 @@ async fn from_warc(
         requested_url.push_str(&query);
     }
     let timestamp = process_timestamp(&timestamp);
-    format!("{requested_url} at {timestamp}")
+    let mut headers = HeaderMap::new();
+    let Some(response) = state.get_warc_response(requested_url, timestamp).await else {
+        headers.insert("content-type", HeaderValue::from_static("text/html"));
+        return (
+            StatusCode::NOT_FOUND,
+            headers,
+            b"<!DOCTYPE html>
+<h1>knot found</h1>
+if you know this is something that should be in a warc file for the specified time range,
+try again in a few minutes, it might just need to be indexed.
+make sure you url encoded the provided url and be mindful of trailing slashes,
+wahs does not canonicalize it."
+                .to_vec(),
+        );
+    };
+
+    if let Some(content_type) = response.content_type
+        && let Ok(h) = HeaderValue::from_str(&content_type)
+    {
+        headers.insert("content-type", h);
+    }
+
+    (
+        StatusCode::from_u16(response.code).unwrap_or(StatusCode::OK),
+        headers,
+        response.body,
+    )
 }
 
 async fn read_cdx(
