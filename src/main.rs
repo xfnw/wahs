@@ -78,7 +78,7 @@ impl AppState {
             .read()
             .await
             .get(&req_url)
-            .and_then(|b| b.range(..=timestamp).next_back())
+            .and_then(|b| b.range(timestamp..).next())
             .map(|(_, p)| p.clone())
             .ok_or(ResponseError::NotFound)?;
 
@@ -173,7 +173,7 @@ fn mangle_url(base: &Url, join: &str, timestamp: u64) -> Option<String> {
     let enc = utf8_percent_encode(url.as_str(), URL_UNSAFE);
     let mut ptime = timestamp.to_string();
     // surely there is a better way to do this?
-    ptime.truncate(ptime.trim_end_matches('9').len());
+    ptime.truncate(ptime.trim_end_matches('0').len());
     if ptime.len() < 14 {
         ptime.push('*');
     }
@@ -313,7 +313,7 @@ fn process_timestamp(inp: &str) -> u64 {
     let mut num = 0;
     for _ in 0..14 {
         num *= 10;
-        num += numbers.next().map(|i| i as u64 - '0' as u64).unwrap_or(9);
+        num += numbers.next().map(|i| i as u64 - '0' as u64).unwrap_or(0);
     }
     num
 }
