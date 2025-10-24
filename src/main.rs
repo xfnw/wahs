@@ -119,11 +119,10 @@ impl AppState {
                         let Some(href) = el.get_attribute("href") else {
                             return Ok(());
                         };
-                        let Ok(url) = base_url.join(&href) else {
+                        let Some(url) = mangle_url(&base_url, &href, timestamp) else {
                             return Ok(());
                         };
-                        let enc = utf8_percent_encode(url.as_str(), URL_UNSAFE);
-                        _ = el.set_attribute("href", &format!("/{timestamp}/{enc}"));
+                        _ = el.set_attribute("href", &url);
                         Ok(())
                     })],
                     ..lol_html::Settings::new()
@@ -139,12 +138,33 @@ impl AppState {
             body.to_vec()
         };
 
+        let mut headers = HeaderMap::new();
+        if let Ok(h) = HeaderValue::from_str(&content_type) {
+            headers.insert("content-type", h);
+        }
+        if let Some(location) = res
+            .headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("location"))
+            .and_then(|h| str::from_utf8(h.value).ok())
+            && let Some(mangled) = mangle_url(&base_url, location, timestamp)
+            && let Ok(h) = HeaderValue::from_str(&mangled)
+        {
+            headers.insert("location", h);
+        }
+
         Ok(WarcResponse {
             code: res.code.unwrap_or(200),
-            content_type,
+            headers,
             body,
         })
     }
+}
+
+fn mangle_url(base: &Url, join: &str, timestamp: u64) -> Option<String> {
+    let url = base.join(join).ok()?;
+    let enc = utf8_percent_encode(url.as_str(), URL_UNSAFE);
+    Some(format!("/{timestamp}/{enc}"))
 }
 
 fn read_warc_record(
@@ -177,7 +197,7 @@ fn read_warc_record(
 #[derive(Debug)]
 struct WarcResponse {
     code: u16,
-    content_type: String,
+    headers: HeaderMap,
     body: Vec<u8>,
 }
 
@@ -296,22 +316,18 @@ async fn from_warc(
         requested_url.push_str(&query);
     }
     let timestamp = process_timestamp(&timestamp);
-    let mut headers = HeaderMap::new();
     let response = match state.get_warc_response(requested_url, timestamp).await {
         Ok(r) => r,
         Err(e) => {
+            let mut headers = HeaderMap::new();
             headers.insert("content-type", HeaderValue::from_static("text/html"));
             return (StatusCode::NOT_FOUND, headers, e.to_string().into_bytes());
         }
     };
 
-    if let Ok(h) = HeaderValue::from_str(&response.content_type) {
-        headers.insert("content-type", h);
-    }
-
     (
         StatusCode::from_u16(response.code).unwrap_or(StatusCode::OK),
-        headers,
+        response.headers,
         response.body,
     )
 }
