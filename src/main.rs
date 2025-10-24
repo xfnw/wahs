@@ -174,7 +174,7 @@ fn mangle_url(base: &Url, join: &str, timestamp: u64) -> Option<String> {
     let mut ptime = timestamp.to_string();
     // surely there is a better way to do this?
     ptime.truncate(ptime.trim_end_matches('0').len());
-    if ptime.len() < 14 {
+    if ptime.is_empty() {
         ptime.push('*');
     }
     Some(format!("/{ptime}/{enc}"))
