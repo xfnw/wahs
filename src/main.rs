@@ -9,7 +9,7 @@ use axum::{
 use mimalloc::MiMalloc;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Write,
+    fmt::{self, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -51,24 +51,29 @@ struct AppState {
 }
 
 impl AppState {
-    async fn get_warc_response(&self, req_url: String, timestamp: u64) -> Option<WarcResponse> {
+    async fn get_warc_response(
+        &self,
+        req_url: String,
+        timestamp: u64,
+    ) -> Result<WarcResponse, ResponseError> {
         let path = self
             .cdx_map
             .read()
             .await
             .get(&req_url)
             .and_then(|b| b.range(..=timestamp).next_back())
-            .map(|(_, p)| p.clone())?;
+            .map(|(_, p)| p.clone())
+            .ok_or(ResponseError::NotFound)?;
 
         let buffered = spawn_blocking(move || read_warc_record(&req_url, &path))
             .await
-            .ok()??;
+            .map_err(ResponseError::TokioJoin)??;
 
         let response = buffered.body();
         let mut headers = [httparse::EMPTY_HEADER; 256];
         let mut res = httparse::Response::new(&mut headers);
         let Ok(httparse::Status::Complete(body_offset)) = res.parse(response) else {
-            return None;
+            return Err(ResponseError::HttpParse);
         };
 
         let content_type = res
@@ -79,7 +84,7 @@ impl AppState {
             .and_then(|v| String::from_utf8(v).ok());
         let body = &response[body_offset..];
 
-        Some(WarcResponse {
+        Ok(WarcResponse {
             code: res.code.unwrap_or(200),
             content_type,
             body: body.to_vec(),
@@ -87,8 +92,11 @@ impl AppState {
     }
 }
 
-fn read_warc_record(req_url: &str, path: &Path) -> Option<warc::Record<warc::BufferedBody>> {
-    let mut file = WarcReader::from_path_gzip(path).ok()?;
+fn read_warc_record(
+    req_url: &str,
+    path: &Path,
+) -> Result<warc::Record<warc::BufferedBody>, ResponseError> {
+    let mut file = WarcReader::from_path_gzip(path).map_err(ResponseError::OpenWarc)?;
     let mut stream_iter = file.stream_records();
     while let Some(Ok(record)) = stream_iter.next_item() {
         if record
@@ -105,10 +113,10 @@ fn read_warc_record(req_url: &str, path: &Path) -> Option<warc::Record<warc::Buf
         if target != req_url {
             continue;
         }
-        return record.into_buffered().ok();
+        return record.into_buffered().map_err(ResponseError::RecordBody);
     }
 
-    None
+    Err(ResponseError::WarcMissing)
 }
 
 #[derive(Debug)]
@@ -116,6 +124,57 @@ struct WarcResponse {
     code: u16,
     content_type: Option<String>,
     body: Vec<u8>,
+}
+
+#[derive(Debug)]
+enum ResponseError {
+    NotFound,
+    TokioJoin(tokio::task::JoinError),
+    HttpParse,
+    OpenWarc(std::io::Error),
+    RecordBody(std::io::Error),
+    WarcMissing,
+}
+
+impl fmt::Display for ResponseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "<!DOCTYPE html>")?;
+        match self {
+            Self::NotFound => write!(
+                f,
+                "<h1>knot found</h1>
+if you know this is something that should be in a warc file for the specified time range,
+try again in a few minutes, the cdx listing it might just need to be indexed.
+make sure you url encoded the provided url and be mindful of trailing slashes,
+wahs does not canonicalize it."
+            ),
+            Self::TokioJoin(join_error) => write!(
+                f,
+                "<h1>what the tokio doin</h1>{}",
+                escape(&join_error.to_string())
+            ),
+            Self::HttpParse => write!(
+                f,
+                "<h1>could not parse http response in warc</h1>
+... this warc file does have http stuff in it, right?"
+            ),
+            Self::OpenWarc(error) => write!(
+                f,
+                "<h1>could knot open warc</h1>{}",
+                escape(&error.to_string())
+            ),
+            Self::RecordBody(error) => write!(
+                f,
+                "<h1>could not read warc record body</h1>{}",
+                escape(&error.to_string())
+            ),
+            Self::WarcMissing => write!(
+                f,
+                "<h1>warc record missing</h1>
+your cdx file says its in there, it or the warc file may be corrupted :("
+            ),
+        }
+    }
 }
 
 fn escape(inp: &str) -> String {
@@ -171,19 +230,12 @@ async fn from_warc(
     }
     let timestamp = process_timestamp(&timestamp);
     let mut headers = HeaderMap::new();
-    let Some(response) = state.get_warc_response(requested_url, timestamp).await else {
-        headers.insert("content-type", HeaderValue::from_static("text/html"));
-        return (
-            StatusCode::NOT_FOUND,
-            headers,
-            b"<!DOCTYPE html>
-<h1>knot found</h1>
-if you know this is something that should be in a warc file for the specified time range,
-try again in a few minutes, it might just need to be indexed.
-make sure you url encoded the provided url and be mindful of trailing slashes,
-wahs does not canonicalize it."
-                .to_vec(),
-        );
+    let response = match state.get_warc_response(requested_url, timestamp).await {
+        Ok(r) => r,
+        Err(e) => {
+            headers.insert("content-type", HeaderValue::from_static("text/html"));
+            return (StatusCode::NOT_FOUND, headers, e.to_string().into_bytes());
+        }
     };
 
     if let Some(content_type) = response.content_type
