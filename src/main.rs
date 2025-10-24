@@ -98,16 +98,19 @@ impl AppState {
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("content-type"))
             .map(|h| h.value.to_vec())
-            .and_then(|v| String::from_utf8(v).ok());
+            .and_then(|v| String::from_utf8(v).ok())
+            .unwrap_or_else(|| "text/html".to_string());
         let body = &response[body_offset..];
 
-        let body = if let Some(ref ct) = content_type
-            && let ct = ct.split_once(';').map(|(s, _)| s).unwrap_or(ct)
-            // FIXME: treating xhtml like html is very naughty
-            // people are usually nice enough to make their xhtml
-            // html-compatible-ish tho
-            && (ct.eq_ignore_ascii_case("text/html")
-                || ct.eq_ignore_ascii_case("application/xhtml+xml"))
+        let ct = content_type
+            .split_once(';')
+            .map(|(s, _)| s)
+            .unwrap_or(&content_type);
+        // FIXME: treating xhtml like html is very naughty
+        // people are usually nice enough to make their xhtml
+        // html-compatible-ish tho
+        let body = if ct.eq_ignore_ascii_case("text/html")
+            || ct.eq_ignore_ascii_case("application/xhtml+xml")
         {
             let mut output = vec![];
             let mut rewriter = HtmlRewriter::new(
@@ -174,7 +177,7 @@ fn read_warc_record(
 #[derive(Debug)]
 struct WarcResponse {
     code: u16,
-    content_type: Option<String>,
+    content_type: String,
     body: Vec<u8>,
 }
 
@@ -302,9 +305,7 @@ async fn from_warc(
         }
     };
 
-    if let Some(content_type) = response.content_type
-        && let Ok(h) = HeaderValue::from_str(&content_type)
-    {
+    if let Ok(h) = HeaderValue::from_str(&response.content_type) {
         headers.insert("content-type", h);
     }
 
