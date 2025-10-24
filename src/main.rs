@@ -171,7 +171,13 @@ impl AppState {
 fn mangle_url(base: &Url, join: &str, timestamp: u64) -> Option<String> {
     let url = base.join(join).ok()?;
     let enc = utf8_percent_encode(url.as_str(), URL_UNSAFE);
-    Some(format!("/{timestamp}/{enc}"))
+    let mut ptime = timestamp.to_string();
+    // surely there is a better way to do this?
+    ptime.truncate(ptime.trim_end_matches('9').len());
+    if ptime.len() < 14 {
+        ptime.push('*');
+    }
+    Some(format!("/{ptime}/{enc}"))
 }
 
 fn read_warc_record(
