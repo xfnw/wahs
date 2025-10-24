@@ -115,16 +115,28 @@ impl AppState {
             let mut output = vec![];
             let mut rewriter = HtmlRewriter::new(
                 lol_html::Settings {
-                    element_content_handlers: vec![element!("[href]", |el| {
-                        let Some(href) = el.get_attribute("href") else {
-                            return Ok(());
-                        };
-                        let Some(url) = mangle_url(&base_url, &href, timestamp) else {
-                            return Ok(());
-                        };
-                        _ = el.set_attribute("href", &url);
-                        Ok(())
-                    })],
+                    element_content_handlers: vec![
+                        element!("[href]", |el| {
+                            let Some(href) = el.get_attribute("href") else {
+                                return Ok(());
+                            };
+                            let Some(url) = mangle_url(&base_url, &href, timestamp) else {
+                                return Ok(());
+                            };
+                            _ = el.set_attribute("href", &url);
+                            Ok(())
+                        }),
+                        element!("[src]", |el| {
+                            let Some(src) = el.get_attribute("src") else {
+                                return Ok(());
+                            };
+                            let Some(url) = mangle_url(&base_url, &src, timestamp) else {
+                                return Ok(());
+                            };
+                            _ = el.set_attribute("src", &url);
+                            Ok(())
+                        }),
+                    ],
                     ..lol_html::Settings::new()
                 },
                 |c: &[u8]| output.extend_from_slice(c),
