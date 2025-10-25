@@ -1,7 +1,7 @@
 use argh::FromArgs;
 use axum::{
     Router,
-    extract::{Path as PathExtract, RawQuery, State},
+    extract::{Path as PathExtract, Query, RawQuery, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
     routing::get,
@@ -422,7 +422,7 @@ async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
 <title>wahs</title>
 <h1>wahs</h1>
 go request stuff to <code>/YYYYMMDDHHMMSS/someurl</code>
-(remember to url escape the url)
+(remember to url escape the url), or <a href=search>search for a url</a>
 <h2>log</h2>
 <pre>{}</pre>",
         escape(&log)
@@ -464,6 +464,49 @@ async fn from_warc(
         response.headers,
         response.body,
     )
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Html<String> {
+    let query = query.get("q");
+    let mut out = "<!DOCTYPE html>
+<meta charset=UTF-8>
+<meta name=viewport content=\"width=device-width, initial-scale=1\">
+<title>wahs search</title><h1>search for urls</h1><form action=?>
+<label>search <input name=q autofocus onfocus=this.select() value=\""
+        .to_string();
+    if let Some(query) = query {
+        out.push_str(&escape(query));
+    }
+    out.push_str("\"></label> <input type=submit> </form>");
+
+    if let Some(query) = query {
+        let words: Vec<_> = query.split_ascii_whitespace().collect();
+        out.push_str("<h2>results</h2><ul>");
+        for res in state
+            .cdx_map
+            .read()
+            .await
+            .keys()
+            .filter(|u| words.iter().all(|w| u.contains(w)))
+            .take(100)
+        {
+            if let Some(mangled) = mangle_url(None, res, 0) {
+                write!(
+                    out,
+                    "<li><a href=\"{}\">{}</a></li>",
+                    escape(&mangled),
+                    escape(res)
+                )
+                .unwrap();
+            }
+        }
+        out.push_str("</ul>");
+    }
+
+    Html(out)
 }
 
 async fn read_cdx(
@@ -594,6 +637,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(root))
+        .route("/search", get(search))
         .route("/{timestamp}/{*pathurl}", get(from_warc))
         .with_state(state);
 
