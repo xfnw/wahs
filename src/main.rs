@@ -73,14 +73,33 @@ impl AppState {
         timestamp: u64,
     ) -> Result<WarcResponse, ResponseError> {
         let base_url = Url::parse(&req_url).map_err(ResponseError::UrlParse)?;
-        let path = self
-            .cdx_map
-            .read()
-            .await
-            .get(&req_url)
-            .and_then(|b| b.range(timestamp..).next())
-            .map(|(_, p)| p.clone())
-            .ok_or(ResponseError::NotFound)?;
+        let path = {
+            let cdx_map = self.cdx_map.read().await;
+            let ts_map = cdx_map.get(&req_url).ok_or(ResponseError::NotFound)?;
+            match ts_map.get(&timestamp) {
+                Some(p) => p.clone(),
+                None => {
+                    if let Some((&newt, _)) = ts_map
+                        .range(timestamp..)
+                        .next()
+                        .or_else(|| ts_map.range(..timestamp).next_back())
+                    {
+                        let loc = mangle_url(None, &req_url, newt).unwrap();
+                        let mut headers = HeaderMap::new();
+                        headers.insert(
+                            "location",
+                            HeaderValue::from_str(&loc).map_err(ResponseError::HeaderBorked)?,
+                        );
+                        return Ok(WarcResponse {
+                            code: StatusCode::TEMPORARY_REDIRECT.into(),
+                            headers,
+                            body: vec![],
+                        });
+                    }
+                    unreachable!();
+                }
+            }
+        };
 
         let buffered = spawn_blocking(move || read_warc_record(&req_url, &path))
             .await
@@ -152,24 +171,28 @@ impl AppState {
 
         let mut headers = HeaderMap::new();
         for h in res.headers.iter() {
-            if let Ok(k) = HeaderName::try_from(format!("x-archive-orig-{}", h.name))
-                && let Ok(v) = HeaderValue::from_bytes(h.value)
-            {
-                headers.insert(k, v);
+            if let Ok(k) = HeaderName::try_from(format!("x-archive-orig-{}", h.name)) {
+                headers.insert(
+                    k,
+                    HeaderValue::from_bytes(h.value).map_err(ResponseError::HeaderBorked)?,
+                );
             }
         }
-        if let Ok(h) = HeaderValue::from_str(&content_type) {
-            headers.insert("content-type", h);
-        }
+        headers.insert(
+            "content-type",
+            HeaderValue::from_str(&content_type).map_err(ResponseError::HeaderBorked)?,
+        );
         if let Some(location) = res
             .headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("location"))
             .and_then(|h| str::from_utf8(h.value).ok())
             && let Some(mangled) = mangle_url(Some(&base_url), location, timestamp)
-            && let Ok(h) = HeaderValue::from_str(&mangled)
         {
-            headers.insert("location", h);
+            headers.insert(
+                "location",
+                HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
+            );
         }
 
         Ok(WarcResponse {
@@ -240,6 +263,7 @@ enum ResponseError {
     RecordBody(std::io::Error),
     WarcMissing,
     RewriteHtml(lol_html::errors::RewritingError),
+    HeaderBorked(axum::http::header::InvalidHeaderValue),
 }
 
 impl fmt::Display for ResponseError {
@@ -288,6 +312,11 @@ your cdx file says its in there, it or the warc file may be corrupted :("
                 f,
                 "<h1>error rewriting html</h1>{}",
                 escape(&rewrite_error.to_string())
+            ),
+            Self::HeaderBorked(error) => write!(
+                f,
+                "<h1>invalid header value</h1>{}",
+                escape(&error.to_string())
             ),
         }
     }
