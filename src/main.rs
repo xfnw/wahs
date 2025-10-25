@@ -101,7 +101,7 @@ impl AppState {
             }
         };
 
-        let buffered = spawn_blocking(move || read_warc_record(&req_url, &path))
+        let buffered = spawn_blocking(move || read_warc_record(&req_url, &path, timestamp))
             .await
             .map_err(ResponseError::TokioJoin)??;
 
@@ -226,8 +226,10 @@ fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> 
 fn read_warc_record(
     req_url: &str,
     path: &Path,
+    timestamp: u64,
 ) -> Result<warc::Record<warc::BufferedBody>, ResponseError> {
     let mut file = WarcReader::from_path_gzip(path).map_err(ResponseError::OpenWarc)?;
+    let tstr = timestamp.to_string();
     let mut stream_iter = file.stream_records();
     while let Some(Ok(record)) = stream_iter.next_item() {
         if record
@@ -242,6 +244,9 @@ fn read_warc_record(
         let target = target.strip_prefix("<").unwrap_or(&target);
         let target = target.strip_suffix(">").unwrap_or(target);
         if target != req_url {
+            continue;
+        }
+        if record.date().format("%Y%m%d%H%M%S").to_string() != tstr {
             continue;
         }
         return record.into_buffered().map_err(ResponseError::RecordBody);
