@@ -282,7 +282,7 @@ impl fmt::Display for ResponseError {
             Self::NotFound => write!(
                 f,
                 "<h1>knot found</h1>
-if you know this is something that should be in a warc file for the specified time range,
+if you know this is something that should be in a warc file,
 try again in a few minutes, the cdx listing it might just need to be indexed.
 make sure you url encoded the provided url and be mindful of trailing slashes,
 wahs does not canonicalize it."
