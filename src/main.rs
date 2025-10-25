@@ -142,6 +142,12 @@ impl AppState {
                 HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
             );
         }
+        let is_compressed = if let Some(encoding) = headers.get("x-archive-orig-content-encoding") {
+            headers.insert("content-encoding", encoding.clone());
+            true
+        } else {
+            false
+        };
         let content_type = headers
             .get("content-type")
             .expect("we just added it lol")
@@ -157,8 +163,9 @@ impl AppState {
         // FIXME: treating xhtml like html is very naughty
         // people are usually nice enough to make their xhtml
         // html-compatible-ish tho
-        let body = if ct.eq_ignore_ascii_case("text/html")
-            || ct.eq_ignore_ascii_case("application/xhtml+xml")
+        let body = if !is_compressed
+            && (ct.eq_ignore_ascii_case("text/html")
+                || ct.eq_ignore_ascii_case("application/xhtml+xml"))
         {
             let mut output = vec![];
             let mut rewriter = HtmlRewriter::new(
