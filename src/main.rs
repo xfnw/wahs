@@ -153,6 +153,12 @@ impl AppState {
             .expect("we just added it lol")
             .to_str()
             .unwrap_or("application/octet-stream");
+        let is_chunked = headers
+            .get("x-archive-orig-transfer-encoding")
+            // transfer-encoding is technically a list of directives,
+            // but the (seldom used) other options are compression stuff
+            // which we would not be able to handle anyways
+            .is_some_and(|h| h == "chunked");
 
         let body = &response[body_offset..];
 
@@ -197,9 +203,21 @@ impl AppState {
                 |c: &[u8]| output.extend_from_slice(c),
             );
 
-            rewriter.write(body).map_err(ResponseError::RewriteHtml)?;
-            rewriter.end().map_err(ResponseError::RewriteHtml)?;
+            if is_chunked {
+                for chunk in UnChonk(body) {
+                    rewriter.write(chunk).map_err(ResponseError::RewriteHtml)?;
+                }
+            } else {
+                rewriter.write(body).map_err(ResponseError::RewriteHtml)?;
+            }
 
+            rewriter.end().map_err(ResponseError::RewriteHtml)?;
+            output
+        } else if is_chunked {
+            let mut output = vec![];
+            for chunk in UnChonk(body) {
+                output.extend_from_slice(chunk);
+            }
             output
         } else {
             body.to_vec()
@@ -336,6 +354,38 @@ your cdx file says its in there, it or the warc file may be corrupted :("
                 escape(&error.to_string())
             ),
         }
+    }
+}
+
+#[derive(Debug)]
+struct UnChonk<'a>(&'a [u8]);
+
+impl<'a> Iterator for UnChonk<'a> {
+    type Item = &'a [u8];
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut len = 0;
+        while let Some(digit) = self.0.first().and_then(|&b| unhex_ascii(b)) {
+            len <<= 4;
+            len += digit as usize;
+            self.0 = &self.0[1..];
+        }
+        if len == 0 || self.0.len() < len + 4 {
+            return None;
+        }
+        assert_eq!(&self.0[..2], b"\r\n");
+        assert_eq!(&self.0[len + 2..len + 4], b"\r\n");
+        let out = &self.0[2..len + 2];
+        self.0 = &self.0[len + 4..];
+        Some(out)
+    }
+}
+
+fn unhex_ascii(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'A'..=b'F' => Some(b - b'A' + 0xa),
+        b'a'..=b'f' => Some(b - b'a' + 0xa),
+        _ => None,
     }
 }
 
