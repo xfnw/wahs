@@ -75,7 +75,9 @@ impl AppState {
         let base_url = Url::parse(&req_url).map_err(ResponseError::UrlParse)?;
         let path = {
             let cdx_map = self.cdx_map.read().await;
-            let ts_map = cdx_map.get(&req_url).ok_or(ResponseError::NotFound)?;
+            let Some(ts_map) = cdx_map.get(&req_url) else {
+                return Err(ResponseError::NotFound(req_url));
+            };
             match ts_map.get(&timestamp) {
                 Some(p) => p.clone(),
                 None => {
@@ -265,7 +267,7 @@ struct WarcResponse {
 #[derive(Debug)]
 enum ResponseError {
     UrlParse(url::ParseError),
-    NotFound,
+    NotFound(String),
     TokioJoin(tokio::task::JoinError),
     HttpParse,
     OpenWarc(std::io::Error),
@@ -284,13 +286,15 @@ impl fmt::Display for ResponseError {
                 "<h1>could not parse provided url</h1>{}",
                 escape(&parse_error.to_string())
             ),
-            Self::NotFound => write!(
+            Self::NotFound(url) => write!(
                 f,
                 "<h1>knot found</h1>
 if you know this is something that should be in a warc file,
 try again in a few minutes, the cdx listing it might just need to be indexed.
 make sure you url encoded the provided url and be mindful of trailing slashes,
-wahs does not canonicalize it."
+wahs does not canonicalize it.
+<a href=\"{}\">maybe it's available on the web?</a>",
+                escape(url)
             ),
             Self::TokioJoin(join_error) => write!(
                 f,
