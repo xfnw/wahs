@@ -114,19 +114,46 @@ impl AppState {
             return Err(ResponseError::HttpParse);
         };
 
-        let content_type = res
-            .headers
-            .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("content-type"))
-            .map(|h| h.value.to_vec())
-            .and_then(|v| String::from_utf8(v).ok())
-            .unwrap_or_else(|| "text/html".to_string());
+        let mut headers = HeaderMap::new();
+        for h in res.headers.iter() {
+            if let Ok(k) = HeaderName::try_from(format!("x-archive-orig-{}", h.name)) {
+                headers.insert(
+                    k,
+                    HeaderValue::from_bytes(h.value).map_err(ResponseError::HeaderBorked)?,
+                );
+            }
+        }
+        let content_type = headers
+            .get("x-archive-orig-content-type")
+            .cloned()
+            .unwrap_or(HeaderValue::from_static("text/html"));
+        headers.insert("content-type", content_type);
+        headers.insert(
+            "cache-control",
+            HeaderValue::from_static("public, max-age=604800, immutable"),
+        );
+        if let Some(location) = headers
+            .get("x-archive-orig-location")
+            .and_then(|h| h.to_str().ok())
+            && let Some(mangled) = mangle_url(Some(&base_url), location, timestamp)
+        {
+            headers.insert(
+                "location",
+                HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
+            );
+        }
+        let content_type = headers
+            .get("content-type")
+            .expect("we just added it lol")
+            .to_str()
+            .unwrap_or("application/octet-stream");
+
         let body = &response[body_offset..];
 
         let ct = content_type
             .split_once(';')
             .map(|(s, _)| s)
-            .unwrap_or(&content_type);
+            .unwrap_or(content_type);
         // FIXME: treating xhtml like html is very naughty
         // people are usually nice enough to make their xhtml
         // html-compatible-ish tho
@@ -170,36 +197,6 @@ impl AppState {
         } else {
             body.to_vec()
         };
-
-        let mut headers = HeaderMap::new();
-        for h in res.headers.iter() {
-            if let Ok(k) = HeaderName::try_from(format!("x-archive-orig-{}", h.name)) {
-                headers.insert(
-                    k,
-                    HeaderValue::from_bytes(h.value).map_err(ResponseError::HeaderBorked)?,
-                );
-            }
-        }
-        headers.insert(
-            "content-type",
-            HeaderValue::from_str(&content_type).map_err(ResponseError::HeaderBorked)?,
-        );
-        headers.insert(
-            "cache-control",
-            HeaderValue::from_static("public, max-age=604800, immutable"),
-        );
-        if let Some(location) = res
-            .headers
-            .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("location"))
-            .and_then(|h| str::from_utf8(h.value).ok())
-            && let Some(mangled) = mangle_url(Some(&base_url), location, timestamp)
-        {
-            headers.insert(
-                "location",
-                HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
-            );
-        }
 
         Ok(WarcResponse {
             code: res.code.unwrap_or(200),
