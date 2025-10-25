@@ -301,7 +301,13 @@ enum ResponseError {
 
 impl fmt::Display for ResponseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "<!DOCTYPE html>")?;
+        writeln!(
+            f,
+            "<!DOCTYPE html>
+<meta charset=UTF-8>
+<meta name=viewport content=\"width=device-width, initial-scale=1\">
+<title>error</title>"
+        )?;
         match self {
             Self::UrlParse(parse_error) => write!(
                 f,
@@ -411,6 +417,9 @@ async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
     let log = state.log.read().await;
     Html(format!(
         "<!DOCTYPE html>
+<meta charset=UTF-8>
+<meta name=viewport content=\"width=device-width, initial-scale=1\">
+<title>wahs</title>
 <h1>wahs</h1>
 go request stuff to <code>/YYYYMMDDHHMMSS/someurl</code>
 (remember to url escape the url)
