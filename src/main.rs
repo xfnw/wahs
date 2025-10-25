@@ -182,6 +182,10 @@ impl AppState {
             "content-type",
             HeaderValue::from_str(&content_type).map_err(ResponseError::HeaderBorked)?,
         );
+        headers.insert(
+            "cache-control",
+            HeaderValue::from_static("public, max-age=604800, immutable"),
+        );
         if let Some(location) = res
             .headers
             .iter()
