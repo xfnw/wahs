@@ -491,7 +491,7 @@ async fn search(
             .await
             .keys()
             .filter(|u| words.iter().all(|w| u.contains(w)))
-            .take(100)
+            .take(1000)
         {
             if let Some(mangled) = mangle_url(None, res, 0) {
                 write!(
