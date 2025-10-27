@@ -1,4 +1,5 @@
-use std::{borrow::Cow, env::args};
+use libflate::gzip::MultiDecoder as GzipReader;
+use std::{borrow::Cow, env::args, io::BufReader};
 use warc::{WarcHeader, WarcReader};
 
 fn main() {
@@ -7,7 +8,11 @@ fn main() {
     println!(" CDX a b m s k g u");
 
     for filename in args().skip(1) {
-        let file = WarcReader::from_path_gzip(&filename).expect("failed to read warc file");
+        let file = std::fs::File::open(&filename).expect("open warc file");
+        let file = WarcReader::new(BufReader::with_capacity(
+            8192,
+            GzipReader::new(BufReader::with_capacity(1 << 20, file)).expect("open gzip"),
+        ));
 
         for record in file.iter_records() {
             let Ok(record) = record else {

@@ -1152,6 +1152,7 @@ dependencies = [
  "argh",
  "axum",
  "httparse",
+ "libflate",
  "lol_html",
  "mimalloc",
  "percent-encoding",
