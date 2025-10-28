@@ -172,8 +172,7 @@ impl AppState {
 
         let ct = content_type
             .split_once(';')
-            .map(|(s, _)| s)
-            .unwrap_or(content_type);
+            .map_or(content_type, |(s, _)| s);
         // FIXME: treating xhtml like html is very naughty
         // people are usually nice enough to make their xhtml
         // html-compatible-ish tho
@@ -451,7 +450,7 @@ fn process_timestamp(inp: &str) -> u64 {
     let mut num = 0;
     for _ in 0..14 {
         num *= 10;
-        num += numbers.next().map(|i| i as u64 - '0' as u64).unwrap_or(0);
+        num += numbers.next().map_or(0, |i| i as u64 - '0' as u64);
     }
     num
 }

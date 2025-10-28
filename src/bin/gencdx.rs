@@ -102,19 +102,17 @@ fn main() {
                 .find(|h| h.name.eq_ignore_ascii_case("content-type"))
                 .map(|h| h.value.to_vec())
                 .and_then(|v| String::from_utf8(v).ok())
-                .map(Cow::Owned)
-                .unwrap_or(Cow::Borrowed("-"));
-            let m = m.split_once([';', ' ']).map(|(m, _)| m).unwrap_or(&m);
+                .map_or(Cow::Borrowed("-"), Cow::Owned);
+            let m = m.split_once([';', ' ']).map_or(m.as_ref(), |(m, _)| m);
             // s - response code
             let s = res
                 .code
-                .map(|n| Cow::Owned(n.to_string()))
-                .unwrap_or(Cow::Borrowed("-"));
+                .map_or(Cow::Borrowed("-"), |n| Cow::Owned(n.to_string()));
             // k - new style checksum
             let k = record
                 .header(WarcHeader::PayloadDigest)
                 .unwrap_or(Cow::Borrowed("-"));
-            let k = k.split_once(":").map(|(_, k)| k).unwrap_or(&k);
+            let k = k.split_once(":").map_or(k.as_ref(), |(_, k)| k);
             // V - file offset (before decompression)
             // should be uppercase, but rust is anal about naming
             let v = last_member.load(Ordering::Relaxed);
