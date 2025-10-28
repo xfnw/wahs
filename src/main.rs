@@ -245,7 +245,10 @@ fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> 
     } else {
         Url::parse(join).ok()
     }?;
-    let enc = utf8_percent_encode(url.as_str(), URL_UNSAFE);
+    let url = url.as_str();
+    let stop = url.find(['#', '?']).unwrap_or(url.len());
+    let mut enc = utf8_percent_encode(&url[..stop], URL_UNSAFE).to_string();
+    enc.push_str(&url[stop..]);
     let mut ptime = timestamp.to_string();
     // surely there is a better way to do this?
     ptime.truncate(ptime.trim_end_matches('0').len());
