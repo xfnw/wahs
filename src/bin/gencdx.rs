@@ -10,13 +10,20 @@ use warc::{WarcHeader, WarcReader};
 struct LengthReader<'a, T> {
     inner: T,
     count: &'a AtomicU64,
+    expect_start: &'a AtomicU64,
 }
 
 impl<T: Read> Read for LengthReader<'_, T> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let res = self.inner.read(buf);
         if let Ok(size) = res {
-            self.count.fetch_add(size as u64, Ordering::Relaxed);
+            let count = self.count.fetch_add(size as u64, Ordering::Relaxed);
+            if size > 0 && self.expect_start.load(Ordering::Relaxed) == count {
+                assert!(
+                    buf.starts_with(&[31, 139]),
+                    "warc records that are not separate gzip members are not supported"
+                );
+            }
         }
         res
     }
@@ -29,6 +36,7 @@ fn main() {
         let mut old_offset;
         let mut offset = 0;
         let length = AtomicU64::new(0);
+        let expect_start = AtomicU64::new(0);
         let file = std::fs::File::open(&filename).expect("open warc file");
         // XXX: i expected the BufReader on the outside of GzipReader
         // to mess up our offsets, but it seems to be fine?
@@ -40,6 +48,7 @@ fn main() {
             GzipReader::new(LengthReader {
                 inner: BufReader::with_capacity(1 << 20, file),
                 count: &length,
+                expect_start: &expect_start,
             })
             .expect("open gzip"),
         ));
@@ -47,6 +56,7 @@ fn main() {
         for record in file.iter_records() {
             old_offset = offset;
             offset = length.load(Ordering::Relaxed);
+            expect_start.store(offset + 8, Ordering::Relaxed);
             let Ok(record) = record else {
                 continue;
             };
