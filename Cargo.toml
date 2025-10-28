@@ -5,7 +5,7 @@ edition = "2024"
 default-run = "wahs"
 
 [dependencies]
-warc = "0.4"
+warc = { version = "0.4", default-features = false }
 httparse = "1.10.1"
 axum = { version = "0.8.6", default-features = false, features = ["http1", "query", "tokio"] }
 argh = { version = "0.1.13", default-features = false, features = ["help"] }
