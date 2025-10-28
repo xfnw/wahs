@@ -6,12 +6,14 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
 };
+use libflate::gzip::MultiDecoder as GzipReader;
 use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
+    io::{BufReader as StdBufReader, Seek},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -62,6 +64,7 @@ const URL_UNSAFE: &AsciiSet = &CONTROLS
 #[derive(Debug, Clone)]
 struct WarcLocation {
     path: Arc<PathBuf>,
+    offset: u64,
 }
 
 #[derive(Debug)]
@@ -257,8 +260,13 @@ fn read_warc_record(
     location: &WarcLocation,
     timestamp: u64,
 ) -> Result<warc::Record<warc::BufferedBody>, ResponseError> {
-    let mut file =
-        WarcReader::from_path_gzip(location.path.as_ref()).map_err(ResponseError::OpenWarc)?;
+    let mut file = std::fs::File::open(location.path.as_ref()).map_err(ResponseError::OpenWarc)?;
+    file.seek(std::io::SeekFrom::Start(location.offset))
+        .map_err(ResponseError::OpenWarc)?;
+    let mut file = WarcReader::new(StdBufReader::new(
+        GzipReader::new(StdBufReader::with_capacity(1 << 20, file))
+            .map_err(ResponseError::OpenWarc)?,
+    ));
     let tstr = timestamp.to_string();
     let mut stream_iter = file.stream_records();
     while let Some(Ok(record)) = stream_iter.next_item() {
@@ -544,6 +552,7 @@ async fn read_cdx(
         .clone()
         .find(|(_, c)| *c == "b")
         .ok_or("no `b` date column in header")?;
+    let offset = header.clone().find(|(_, c)| *c == "V").map(|(o, _)| o);
     let (warcname, _) = header
         .find(|(_, c)| *c == "g")
         .ok_or("no `g` warc filename column in header")?;
@@ -558,6 +567,10 @@ async fn read_cdx(
         let date = columns.get(date).ok_or("date field missing")?;
         let date = date.parse().map_err(|_| "malformed date")?;
         let &warcname = columns.get(warcname).ok_or("warc filename field missing")?;
+        let offset = offset
+            .and_then(|o| columns.get(o))
+            .and_then(|o| o.parse().ok())
+            .unwrap_or(0);
         let warcname = parent.join(warcname);
         let warcname = if let Some(w) = dedup.get(&warcname) {
             w.clone()
@@ -567,9 +580,13 @@ async fn read_cdx(
             w
         };
 
-        map.entry(url.to_string())
-            .or_default()
-            .insert(date, WarcLocation { path: warcname });
+        map.entry(url.to_string()).or_default().insert(
+            date,
+            WarcLocation {
+                path: warcname,
+                offset,
+            },
+        );
     }
 
     Ok(())
