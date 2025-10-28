@@ -9,7 +9,7 @@ use axum::{
 use libflate::gzip::MultiDecoder as GzipReader;
 use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
-use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
@@ -461,7 +461,7 @@ async fn from_warc(
     let mut requested_url = path_url;
     if let Some(query) = query {
         requested_url.push('?');
-        requested_url.push_str(&query);
+        requested_url.push_str(&percent_decode_str(&query).decode_utf8_lossy());
     }
     let timestamp = process_timestamp(&timestamp);
     let response = match state.get_warc_response(requested_url, timestamp).await {
