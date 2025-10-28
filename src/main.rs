@@ -59,10 +59,15 @@ const URL_UNSAFE: &AsciiSet = &CONTROLS
     .add(b'|')
     .add(b'}');
 
+#[derive(Debug, Clone)]
+struct WarcLocation {
+    path: Arc<PathBuf>,
+}
+
 #[derive(Debug)]
 struct AppState {
     directories: Vec<PathBuf>,
-    cdx_map: RwLock<BTreeMap<String, BTreeMap<u64, Arc<PathBuf>>>>,
+    cdx_map: RwLock<BTreeMap<String, BTreeMap<u64, WarcLocation>>>,
     log: RwLock<String>,
 }
 
@@ -73,13 +78,13 @@ impl AppState {
         timestamp: u64,
     ) -> Result<WarcResponse, ResponseError> {
         let base_url = Url::parse(&req_url).map_err(ResponseError::UrlParse)?;
-        let path = {
+        let loc = {
             let cdx_map = self.cdx_map.read().await;
             let Some(ts_map) = cdx_map.get(&req_url) else {
                 return Err(ResponseError::NotFound(req_url));
             };
             match ts_map.get(&timestamp) {
-                Some(p) => p.clone(),
+                Some(l) => l.clone(),
                 None => {
                     if let Some((&newt, _)) = ts_map
                         .range(timestamp..)
@@ -103,7 +108,7 @@ impl AppState {
             }
         };
 
-        let buffered = spawn_blocking(move || read_warc_record(&req_url, &path, timestamp))
+        let buffered = spawn_blocking(move || read_warc_record(&req_url, &loc, timestamp))
             .await
             .map_err(ResponseError::TokioJoin)??;
 
@@ -249,10 +254,11 @@ fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> 
 
 fn read_warc_record(
     req_url: &str,
-    path: &Path,
+    location: &WarcLocation,
     timestamp: u64,
 ) -> Result<warc::Record<warc::BufferedBody>, ResponseError> {
-    let mut file = WarcReader::from_path_gzip(path).map_err(ResponseError::OpenWarc)?;
+    let mut file =
+        WarcReader::from_path_gzip(location.path.as_ref()).map_err(ResponseError::OpenWarc)?;
     let tstr = timestamp.to_string();
     let mut stream_iter = file.stream_records();
     while let Some(Ok(record)) = stream_iter.next_item() {
@@ -511,7 +517,7 @@ async fn search(
 
 async fn read_cdx(
     cdxname: &Path,
-    map: &mut BTreeMap<String, BTreeMap<u64, Arc<PathBuf>>>,
+    map: &mut BTreeMap<String, BTreeMap<u64, WarcLocation>>,
     dedup: &mut BTreeSet<Arc<PathBuf>>,
 ) -> Result<(), &'static str> {
     let parent = cdxname.parent().ok_or("no parent")?;
@@ -563,13 +569,13 @@ async fn read_cdx(
 
         map.entry(url.to_string())
             .or_default()
-            .insert(date, warcname);
+            .insert(date, WarcLocation { path: warcname });
     }
 
     Ok(())
 }
 
-async fn reindex(dirs: &[PathBuf]) -> (BTreeMap<String, BTreeMap<u64, Arc<PathBuf>>>, String) {
+async fn reindex(dirs: &[PathBuf]) -> (BTreeMap<String, BTreeMap<u64, WarcLocation>>, String) {
     let mut dedup = BTreeSet::new();
     let mut map = BTreeMap::new();
     let mut log = String::new();
