@@ -24,10 +24,8 @@ impl<T: Read> Read for LengthReader<'_, T> {
                 self.expect_start = true;
             }
             if self.expect_start && size > 0 && count >= start_location {
-                assert!(
-                    start_location == count && buf.starts_with(&[31, 139]),
-                    "could not find start of gzip! warc records that are not separate gzip members are not supported"
-                );
+                assert!(start_location == count, "start of gzip skipped over");
+                assert!(buf.starts_with(&[31, 139]), "could not find start of gzip");
                 self.expect_start = false;
             }
         }
