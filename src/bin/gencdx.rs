@@ -112,7 +112,7 @@ fn main() {
             let k = record
                 .header(WarcHeader::PayloadDigest)
                 .unwrap_or(Cow::Borrowed("-"));
-            let k = k.split_once(":").map_or(k.as_ref(), |(_, k)| k);
+            let k = k.split_once(':').map_or(k.as_ref(), |(_, k)| k);
             // V - file offset (before decompression)
             // should be uppercase, but rust is anal about naming
             let v = last_member.load(Ordering::Relaxed);
