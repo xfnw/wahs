@@ -204,6 +204,27 @@ impl AppState {
                             _ = el.set_attribute("src", &url);
                             Ok(())
                         }),
+                        element!("[srcset]", |el| {
+                            let Some(srcset) = el.get_attribute("srcset") else {
+                                return Ok(());
+                            };
+                            let srcset: Vec<_> = srcset
+                                .split_inclusive(',')
+                                .map(str::trim_ascii)
+                                .map(|s| match s.split_once(' ') {
+                                    Some((s, r)) => format!(
+                                        "{} {}",
+                                        mangle_url(Some(&base_url), s, timestamp)
+                                            .unwrap_or_else(|| s.to_string()),
+                                        r
+                                    ),
+                                    None => mangle_url(Some(&base_url), s, timestamp)
+                                        .unwrap_or_else(|| s.to_string()),
+                                })
+                                .collect();
+                            _ = el.set_attribute("srcset", &srcset.join(" "));
+                            Ok(())
+                        }),
                     ],
                     ..lol_html::Settings::new()
                 },
