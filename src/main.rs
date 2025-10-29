@@ -502,7 +502,12 @@ async fn from_warc(
         Err(e) => {
             let mut headers = HeaderMap::new();
             headers.insert("content-type", HeaderValue::from_static("text/html"));
-            return (StatusCode::NOT_FOUND, headers, e.to_string().into_bytes());
+            let status = match e {
+                ResponseError::UrlParse(_) => StatusCode::BAD_REQUEST,
+                ResponseError::NotFound(_) => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return (status, headers, e.to_string().into_bytes());
         }
     };
 
