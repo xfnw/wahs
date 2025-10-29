@@ -15,6 +15,7 @@ use std::{
     fmt::{self, Write},
     io::{BufReader as StdBufReader, Seek},
     net::SocketAddr,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -110,6 +111,7 @@ impl AppState {
                 }
             }
         };
+        let warc_path = loc.path.clone();
 
         let buffered = spawn_blocking(move || read_warc_record(&req_url, &loc, timestamp))
             .await
@@ -130,6 +132,9 @@ impl AppState {
                     HeaderValue::from_bytes(h.value).map_err(ResponseError::HeaderBorked)?,
                 );
             }
+        }
+        if let Ok(h) = HeaderValue::from_bytes(warc_path.as_os_str().as_bytes()) {
+            headers.insert("x-archive-src", h);
         }
         let content_type = headers
             .get("x-archive-orig-content-type")
