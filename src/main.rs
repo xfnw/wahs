@@ -136,6 +136,11 @@ impl AppState {
         if let Ok(h) = HeaderValue::from_bytes(warc_path.as_os_str().as_bytes()) {
             headers.insert("x-archive-src", h);
         }
+        headers.insert(
+            "link",
+            HeaderValue::from_str(&format!("<{base_url}>; rel=original"))
+                .map_err(ResponseError::HeaderBorked)?,
+        );
         let content_type = headers
             .get("x-archive-orig-content-type")
             .cloned()
