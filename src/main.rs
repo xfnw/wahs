@@ -363,11 +363,8 @@ impl fmt::Display for ResponseError {
             ),
             Self::NotFound(url) => write!(
                 f,
-                "<h1>knot found</h1>
-if you know this is something that should be in a warc file,
-try again in a few minutes, the cdx listing it might just need to be indexed.
-make sure you url encoded the provided url and be mindful of trailing slashes,
-wahs does not canonicalize it.
+                "<h1>404 knot found</h1>
+the url you requested was not present in any of my cdx files.
 <a href=\"{}\">maybe it's available on the web?</a>",
                 escape(url)
             ),
