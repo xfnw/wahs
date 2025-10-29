@@ -11,7 +11,7 @@ use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::{self, Write},
     io::{BufReader as StdBufReader, Seek},
     net::SocketAddr,
@@ -71,7 +71,7 @@ struct WarcLocation {
 #[derive(Debug)]
 struct AppState {
     directories: Vec<PathBuf>,
-    cdx_map: RwLock<BTreeMap<String, BTreeMap<u64, WarcLocation>>>,
+    cdx_map: RwLock<HashMap<String, BTreeMap<u64, WarcLocation>>>,
     log: RwLock<String>,
 }
 
@@ -560,7 +560,7 @@ async fn search(
 
 async fn read_cdx(
     cdxname: &Path,
-    map: &mut BTreeMap<String, BTreeMap<u64, WarcLocation>>,
+    map: &mut HashMap<String, BTreeMap<u64, WarcLocation>>,
     dedup: &mut BTreeSet<Arc<PathBuf>>,
 ) -> Result<(), &'static str> {
     let parent = cdxname.parent().ok_or("no parent")?;
@@ -627,9 +627,12 @@ async fn read_cdx(
     Ok(())
 }
 
-async fn reindex(dirs: &[PathBuf]) -> (BTreeMap<String, BTreeMap<u64, WarcLocation>>, String) {
+async fn reindex(
+    dirs: &[PathBuf],
+    old_size: usize,
+) -> (HashMap<String, BTreeMap<u64, WarcLocation>>, String) {
     let mut dedup = BTreeSet::new();
-    let mut map = BTreeMap::new();
+    let mut map = HashMap::with_capacity(old_size);
     let mut log = String::new();
 
     for dirname in dirs {
@@ -659,14 +662,17 @@ async fn reindex(dirs: &[PathBuf]) -> (BTreeMap<String, BTreeMap<u64, WarcLocati
         writeln!(log, "indexed directory {dirname:?}").unwrap();
     }
 
+    map.shrink_to_fit();
     write!(log, "finished indexing {} urls!", map.len()).unwrap();
     (map, log)
 }
 
 async fn reindex_forever(state: Arc<AppState>, interval: u64) {
     let interval = Duration::from_secs(interval);
+    let mut old_size = 0;
     loop {
-        let (map, stat) = reindex(&state.directories).await;
+        let (map, stat) = reindex(&state.directories, old_size).await;
+        old_size = map.len();
         {
             let mut cdx_map = state.cdx_map.write().await;
             *cdx_map = map;
@@ -687,7 +693,7 @@ async fn main() {
     }
     let state = Arc::new(AppState {
         directories,
-        cdx_map: RwLock::new(BTreeMap::new()),
+        cdx_map: RwLock::new(HashMap::new()),
         log: RwLock::new("not indexed yet...".to_string()),
     });
 
