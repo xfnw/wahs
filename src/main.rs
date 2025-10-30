@@ -358,49 +358,49 @@ impl fmt::Display for ResponseError {
         match self {
             Self::UrlParse(parse_error) => write!(
                 f,
-                "<h1>could not parse provided url</h1>{}",
+                "<h1>could not parse provided url</h1><p>{}</p>",
                 escape(&parse_error.to_string())
             ),
             Self::NotFound(url) => write!(
                 f,
                 "<h1>404 knot found</h1>
-the url you requested was not present in any of my cdx files.
-<a href=\"{}\">maybe it's available on the web?</a>",
+<p>the url you requested was not present in any of my cdx files.
+<a href=\"{}\">maybe it's available on the web?</a></p>",
                 escape(url)
             ),
             Self::TokioJoin(join_error) => write!(
                 f,
-                "<h1>what the tokio doin</h1>{}",
+                "<h1>what the tokio doin</h1><p>{}</p>",
                 escape(&join_error.to_string())
             ),
             Self::HttpParse => write!(
                 f,
                 "<h1>could not parse http response in warc</h1>
-... this warc file does have http stuff in it, right?"
+            <p>... this warc file does have http stuff in it, right?</p>"
             ),
             Self::OpenWarc(error) => write!(
                 f,
-                "<h1>could knot open warc</h1>{}",
+                "<h1>could knot open warc</h1><p>{}</p>",
                 escape(&error.to_string())
             ),
             Self::RecordBody(error) => write!(
                 f,
-                "<h1>could not read warc record body</h1>{}",
+                "<h1>could not read warc record body</h1><p>{}</p>",
                 escape(&error.to_string())
             ),
             Self::WarcMissing => write!(
                 f,
                 "<h1>warc record missing</h1>
-your cdx file says its in there, it or the warc file may be corrupted :("
+<p>your cdx file says its in there, it or the warc file may be corrupted :(</p>"
             ),
             Self::RewriteHtml(rewrite_error) => write!(
                 f,
-                "<h1>error rewriting html</h1>{}",
+                "<h1>error rewriting html</h1><p>{}</p>",
                 escape(&rewrite_error.to_string())
             ),
             Self::HeaderBorked(error) => write!(
                 f,
-                "<h1>invalid header value</h1>{}",
+                "<h1>invalid header value</h1><p>{}</p>",
                 escape(&error.to_string())
             ),
         }
@@ -465,8 +465,8 @@ async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
 <meta name=viewport content=\"width=device-width, initial-scale=1\">
 <title>wahs</title>
 <h1>wahs</h1>
-go request stuff to <code>/YYYYMMDDHHMMSS/someurl</code>
-(remember to url escape the url), or <a href=search>search for a url</a>
+<p>go request stuff to <code>/YYYYMMDDHHMMSS/someurl</code>
+(remember to url escape the url), or <a href=search>search for a url</a></p>
 <h2>log</h2>
 <pre>{}</pre>",
         escape(&log)
