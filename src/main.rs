@@ -542,14 +542,14 @@ async fn search(
     if let Some(query) = query {
         let words: Vec<_> = query.split_ascii_whitespace().collect();
         out.push_str("<h2>results</h2><ul>");
-        for res in state
-            .cdx_map
-            .read()
-            .await
+        let cdx_map = state.cdx_map.read().await;
+        let mut results: Vec<_> = cdx_map
             .keys()
             .filter(|u| words.iter().all(|w| u.contains(w)))
             .take(1000)
-        {
+            .collect();
+        results.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+        for res in results {
             if let Some(mangled) = mangle_url(None, res, 0) {
                 write!(
                     out,
