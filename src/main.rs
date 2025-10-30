@@ -386,20 +386,20 @@ impl fmt::Display for ResponseError {
                 "<h1>could knot open warc</h1>
 <p>{}</p><p>if {} exists, i might have the wrong offset into it</p>",
                 escape(&error.to_string()),
-                escape(&path)
+                escape(path)
             ),
             Self::RecordBody(error, path) => write!(
                 f,
                 "<h1>could not read warc record body</h1>
 <p>{}</p><p>{} is probably corrupted</p>",
                 escape(&error.to_string()),
-                escape(&path)
+                escape(path)
             ),
             Self::WarcMissing(path) => write!(
                 f,
                 "<h1>warc record missing</h1>
 <p>a cdx file says it's in {} but i could not find it</p>",
-                escape(&path)
+                escape(path)
             ),
             Self::RewriteHtml(rewrite_error) => write!(
                 f,
