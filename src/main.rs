@@ -540,12 +540,18 @@ async fn search(
     out.push_str("\"></label> <input type=submit> </form>");
 
     if let Some(query) = query {
-        let words: Vec<_> = query.split_ascii_whitespace().collect();
+        let (mut neg, pos): (Vec<_>, Vec<_>) = query
+            .split_ascii_whitespace()
+            .partition(|w| w.starts_with("-"));
+        neg.retain_mut(|w| {
+            *w = &w[1..];
+            !w.is_empty()
+        });
         out.push_str("<h2>results</h2><ul>");
         let cdx_map = state.cdx_map.read().await;
         let mut results: Vec<_> = cdx_map
             .keys()
-            .filter(|u| words.iter().all(|w| u.contains(w)))
+            .filter(|u| pos.iter().all(|w| u.contains(w)) && neg.iter().all(|w| !u.contains(w)))
             .take(1000)
             .collect();
         results.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
