@@ -44,6 +44,10 @@ struct Opt {
     /// seconds to wait between rereading cdx files
     #[argh(option, default = "300")]
     interval: u64,
+    /// turn off the rather inefficent search page.
+    /// probably a good idea if you want to expose wahs to the internet.
+    #[argh(switch)]
+    no_search: bool,
     /// path(s) to directory of warc and cdx files
     #[argh(positional)]
     directory: Vec<PathBuf>,
@@ -73,6 +77,7 @@ struct AppState {
     directories: Vec<PathBuf>,
     cdx_map: RwLock<HashMap<String, BTreeMap<u64, WarcLocation>>>,
     log: RwLock<String>,
+    search_enabled: bool,
 }
 
 impl AppState {
@@ -474,9 +479,14 @@ async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
 <title>wahs</title>
 <h1>wahs</h1>
 <p>go request stuff to <code>/YYYYMMDDHHMMSS/someurl</code>
-(remember to url escape the url), or <a href=search>search for a url</a></p>
+(remember to url escape the url){}</p>
 <h2>log</h2>
 <pre>{}</pre>",
+        if state.search_enabled {
+            ", or <a href=search>search for a url</a>"
+        } else {
+            ""
+        },
         escape(&log)
     ))
 }
@@ -709,13 +719,18 @@ async fn main() {
         directories,
         cdx_map: RwLock::new(HashMap::new()),
         log: RwLock::new("not indexed yet...".to_string()),
+        search_enabled: !opt.no_search,
     });
 
     tokio::task::spawn(reindex_forever(state.clone(), opt.interval));
 
-    let app = Router::new()
-        .route("/", get(root))
-        .route("/search", get(search))
+    let app = Router::new().route("/", get(root));
+    let app = if opt.no_search {
+        app
+    } else {
+        app.route("/search", get(search))
+    };
+    let app = app
         .route("/{timestamp}/{*pathurl}", get(from_warc))
         .with_state(state);
 
