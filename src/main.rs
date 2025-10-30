@@ -6,6 +6,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
 };
+use html_escape::{encode_double_quoted_attribute, encode_text};
 use libflate::gzip::MultiDecoder as GzipReader;
 use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
@@ -373,19 +374,19 @@ impl fmt::Display for ResponseError {
             Self::UrlParse(parse_error) => write!(
                 f,
                 "<h1>could not parse provided url</h1><p>{}</p>",
-                escape(&parse_error.to_string())
+                encode_text(&parse_error.to_string())
             ),
             Self::NotFound(url) => write!(
                 f,
                 "<h1>404 knot found</h1>
 <p>the url you requested was not present in any of my cdx files.
 <a href=\"{}\">maybe it's available on the web?</a></p>",
-                escape(url)
+                encode_double_quoted_attribute(url)
             ),
             Self::TokioJoin(join_error) => write!(
                 f,
                 "<h1>what the tokio doin</h1><p>{}</p>",
-                escape(&join_error.to_string())
+                encode_text(&join_error.to_string())
             ),
             Self::HttpParse => write!(
                 f,
@@ -396,31 +397,31 @@ impl fmt::Display for ResponseError {
                 f,
                 "<h1>could knot open warc</h1>
 <p>{}</p><p>if {} exists, i might have the wrong offset into it</p>",
-                escape(&error.to_string()),
-                escape(path)
+                encode_text(&error.to_string()),
+                encode_text(path)
             ),
             Self::RecordBody(error, path) => write!(
                 f,
                 "<h1>could not read warc record body</h1>
 <p>{}</p><p>{} is probably corrupted</p>",
-                escape(&error.to_string()),
-                escape(path)
+                encode_text(&error.to_string()),
+                encode_text(path)
             ),
             Self::WarcMissing(path) => write!(
                 f,
                 "<h1>warc record missing</h1>
 <p>a cdx file says it's in {} but i could not find it</p>",
-                escape(path)
+                encode_text(path)
             ),
             Self::RewriteHtml(rewrite_error) => write!(
                 f,
                 "<h1>error rewriting html</h1><p>{}</p>",
-                escape(&rewrite_error.to_string())
+                encode_text(&rewrite_error.to_string())
             ),
             Self::HeaderBorked(error) => write!(
                 f,
                 "<h1>invalid header value</h1><p>{}</p>",
-                escape(&error.to_string())
+                encode_text(&error.to_string())
             ),
         }
     }
@@ -458,24 +459,6 @@ fn unhex_ascii(b: u8) -> Option<u8> {
     }
 }
 
-fn escape(inp: &str) -> String {
-    let mut out = String::new();
-    for c in inp.chars() {
-        out.push_str(match c {
-            '<' => "&lt;",
-            '>' => "&gt;",
-            '&' => "&amp;",
-            '"' => "&quot;",
-            '\'' => "&apos;",
-            _ => {
-                out.push(c);
-                continue;
-            }
-        });
-    }
-    out
-}
-
 async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
     let log = state.log.read().await;
     Html(format!(
@@ -493,7 +476,7 @@ async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
         } else {
             ""
         },
-        escape(&log)
+        encode_text(log.as_str())
     ))
 }
 
@@ -551,7 +534,7 @@ async fn search(
 <label>search <input name=q autofocus onfocus=this.select() value=\""
         .to_string();
     if let Some(query) = query {
-        out.push_str(&escape(query));
+        out.push_str(&encode_double_quoted_attribute(query));
     }
     out.push_str("\"></label> <input type=submit> </form>");
 
@@ -576,8 +559,8 @@ async fn search(
                 write!(
                     out,
                     "<li><a href=\"{}\">{}</a></li>",
-                    escape(&mangled),
-                    escape(res)
+                    encode_double_quoted_attribute(&mangled),
+                    encode_text(res)
                 )
                 .unwrap();
             }
