@@ -6,7 +6,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
 };
-use html_escape::{encode_double_quoted_attribute, encode_text};
+use html_escape::{decode_html_entities, encode_double_quoted_attribute, encode_text};
 use libflate::gzip::MultiDecoder as GzipReader;
 use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
@@ -210,9 +210,11 @@ impl AppState {
                             let Some(href) = el.get_attribute("href") else {
                                 return Ok(());
                             };
+                            let href = decode_html_entities(&href);
                             let Some(url) = mangle_url(Some(&base_url), &href, timestamp) else {
                                 return Ok(());
                             };
+                            let url = encode_double_quoted_attribute(&url);
                             _ = el.set_attribute("href", &url);
                             Ok(())
                         }),
@@ -220,9 +222,11 @@ impl AppState {
                             let Some(src) = el.get_attribute("src") else {
                                 return Ok(());
                             };
+                            let src = decode_html_entities(&src);
                             let Some(url) = mangle_url(Some(&base_url), &src, timestamp) else {
                                 return Ok(());
                             };
+                            let url = encode_double_quoted_attribute(&url);
                             _ = el.set_attribute("src", &url);
                             Ok(())
                         }),
@@ -233,6 +237,7 @@ impl AppState {
                             let srcset: Vec<_> = srcset
                                 .split_inclusive(',')
                                 .map(str::trim_ascii)
+                                .map(decode_html_entities)
                                 .map(|s| match s.split_once(' ') {
                                     Some((s, r)) => format!(
                                         "{} {}",
@@ -240,9 +245,10 @@ impl AppState {
                                             .unwrap_or_else(|| s.to_string()),
                                         r
                                     ),
-                                    None => mangle_url(Some(&base_url), s, timestamp)
+                                    None => mangle_url(Some(&base_url), &s, timestamp)
                                         .unwrap_or_else(|| s.to_string()),
                                 })
+                                .map(|s| encode_double_quoted_attribute(&s).to_string())
                                 .collect();
                             _ = el.set_attribute("srcset", &srcset.join(" "));
                             Ok(())
