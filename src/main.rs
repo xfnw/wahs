@@ -293,12 +293,13 @@ fn read_warc_record(
     location: &WarcLocation,
     timestamp: u64,
 ) -> Result<warc::Record<warc::BufferedBody>, ResponseError> {
-    let mut file = std::fs::File::open(location.path.as_ref()).map_err(ResponseError::OpenWarc)?;
+    let mut file = std::fs::File::open(location.path.as_ref())
+        .map_err(|e| ResponseError::OpenWarc(e, format!("{:?}", location.path)))?;
     file.seek(std::io::SeekFrom::Start(location.offset))
-        .map_err(ResponseError::OpenWarc)?;
+        .map_err(|e| ResponseError::OpenWarc(e, format!("{:?}", location.path)))?;
     let mut file = WarcReader::new(StdBufReader::new(
         GzipReader::new(StdBufReader::with_capacity(1 << 20, file))
-            .map_err(ResponseError::OpenWarc)?,
+            .map_err(|e| ResponseError::OpenWarc(e, format!("{:?}", location.path)))?,
     ));
     let tstr = timestamp.to_string();
     let mut stream_iter = file.stream_records();
@@ -320,10 +321,12 @@ fn read_warc_record(
         if record.date().format("%Y%m%d%H%M%S").to_string() != tstr {
             continue;
         }
-        return record.into_buffered().map_err(ResponseError::RecordBody);
+        return record
+            .into_buffered()
+            .map_err(|e| ResponseError::RecordBody(e, format!("{:?}", location.path)));
     }
 
-    Err(ResponseError::WarcMissing)
+    Err(ResponseError::WarcMissing(format!("{:?}", location.path)))
 }
 
 #[derive(Debug)]
@@ -339,9 +342,9 @@ enum ResponseError {
     NotFound(String),
     TokioJoin(tokio::task::JoinError),
     HttpParse,
-    OpenWarc(std::io::Error),
-    RecordBody(std::io::Error),
-    WarcMissing,
+    OpenWarc(std::io::Error, String),
+    RecordBody(std::io::Error, String),
+    WarcMissing(String),
     RewriteHtml(lol_html::errors::RewritingError),
     HeaderBorked(axum::http::header::InvalidHeaderValue),
 }
@@ -378,20 +381,25 @@ impl fmt::Display for ResponseError {
                 "<h1>could not parse http response in warc</h1>
             <p>... this warc file does have http stuff in it, right?</p>"
             ),
-            Self::OpenWarc(error) => write!(
+            Self::OpenWarc(error, path) => write!(
                 f,
-                "<h1>could knot open warc</h1><p>{}</p>",
-                escape(&error.to_string())
+                "<h1>could knot open warc</h1>
+<p>{}</p><p>if {} exists, i might have the wrong offset into it</p>",
+                escape(&error.to_string()),
+                escape(&path)
             ),
-            Self::RecordBody(error) => write!(
+            Self::RecordBody(error, path) => write!(
                 f,
-                "<h1>could not read warc record body</h1><p>{}</p>",
-                escape(&error.to_string())
+                "<h1>could not read warc record body</h1>
+<p>{}</p><p>{} is probably corrupted</p>",
+                escape(&error.to_string()),
+                escape(&path)
             ),
-            Self::WarcMissing => write!(
+            Self::WarcMissing(path) => write!(
                 f,
                 "<h1>warc record missing</h1>
-<p>your cdx file says its in there, it or the warc file may be corrupted :(</p>"
+<p>a cdx file says it's in {} but i could not find it</p>",
+                escape(&path)
             ),
             Self::RewriteHtml(rewrite_error) => write!(
                 f,
