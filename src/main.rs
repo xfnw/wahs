@@ -155,6 +155,12 @@ impl AppState {
             "cache-control",
             HeaderValue::from_static("public, max-age=604800, immutable"),
         );
+        headers.insert(
+            "content-security-policy",
+            HeaderValue::from_static(
+                "default-src 'self' 'unsafe-eval' 'unsafe-inline' data: blob:",
+            ),
+        );
         if let Some(location) = headers
             .get("x-archive-orig-location")
             .and_then(|h| h.to_str().ok())
