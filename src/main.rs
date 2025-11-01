@@ -492,7 +492,7 @@ async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
 <meta name=viewport content=\"width=device-width, initial-scale=1\">
 <title>wahs</title>
 <h1>wahs</h1>
-<p>go request stuff to <code>/YYYYMMDDHHMMSS/someurl</code>
+<p>go request stuff to <code>/web/YYYYMMDDHHMMSS/someurl</code>
 (remember to url escape the url){}</p>
 <h2>log</h2>
 <pre>{}</pre>",
