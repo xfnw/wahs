@@ -2,7 +2,7 @@ use argh::FromArgs;
 use axum::{
     Router,
     extract::{Path as PathExtract, Query, RawQuery, State},
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
     response::{Html, IntoResponse},
     routing::get,
 };
@@ -10,7 +10,7 @@ use html_escape::{decode_html_entities, encode_double_quoted_attribute, encode_t
 use libflate::gzip::MultiDecoder as GzipReader;
 use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
-use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt::{self, Write},
@@ -18,6 +18,7 @@ use std::{
     net::SocketAddr,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -306,6 +307,24 @@ fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> 
     Some(format!("/web/{ptime}/{enc}"))
 }
 
+fn demangle(inp: &str) -> Option<(u64, Url)> {
+    let mut split = inp.split('/');
+    if split.next().is_none_or(|s| !s.is_empty()) || split.next().is_none_or(|s| s != "web") {
+        return None;
+    }
+    let timestamp = split.next().map(process_timestamp)?;
+    let old: Vec<_> = split.collect();
+    let old = old.join("/");
+    let stop = old.find('?').unwrap_or(old.len());
+    let mut url = percent_decode_str(&old[..stop])
+        .decode_utf8()
+        .ok()?
+        .to_string();
+    url.push_str(&old[stop..]);
+    let url = Url::parse(&url).ok()?;
+    Some((timestamp, url))
+}
+
 fn read_warc_record(
     req_url: &str,
     location: &WarcLocation,
@@ -577,6 +596,29 @@ async fn search(
     Html(out)
 }
 
+async fn fallback(
+    State(state): State<Arc<AppState>>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Result<(StatusCode, HeaderMap), StatusCode> {
+    if let Some(refer) = headers.get("referer").and_then(|h| h.to_str().ok())
+        && let Ok(refer) = Uri::from_str(refer)
+        && let Some(refer) = refer.path_and_query().map(|p| p.as_str())
+        && let Some((timestamp, base)) = demangle(refer)
+        && let Some(join) = uri.path_and_query().map(|p| p.as_str())
+        && let Ok(url) = base.join(join)
+        && state.cdx_map.read().await.contains_key(url.as_str())
+        && let Some(mangled) = mangle_url(None, url.as_str(), timestamp)
+        && let Ok(loc) = HeaderValue::from_str(&mangled)
+    {
+        let mut headers = HeaderMap::new();
+        headers.insert("location", loc);
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers));
+    }
+
+    Err(StatusCode::NOT_FOUND)
+}
+
 async fn read_cdx(
     cdxname: &Path,
     map: &mut HashMap<String, BTreeMap<u64, WarcLocation>>,
@@ -727,6 +769,7 @@ async fn main() {
     };
     let app = app
         .route("/web/{timestamp}/{*pathurl}", get(from_warc))
+        .fallback(fallback)
         .with_state(state);
 
     let listen = TcpListener::bind(opt.bind).await.unwrap();
