@@ -289,6 +289,9 @@ impl AppState {
 }
 
 fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> {
+    if join.starts_with("data:") {
+        return Some(join.to_string());
+    }
     let url = if let Some(base) = base {
         base.join(join).ok()
     } else {
