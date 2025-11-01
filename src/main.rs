@@ -303,7 +303,7 @@ fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> 
     if ptime.is_empty() {
         ptime.push('*');
     }
-    Some(format!("/{ptime}/{enc}"))
+    Some(format!("/web/{ptime}/{enc}"))
 }
 
 fn read_warc_record(
@@ -726,7 +726,7 @@ async fn main() {
         app.route("/search", get(search))
     };
     let app = app
-        .route("/{timestamp}/{*pathurl}", get(from_warc))
+        .route("/web/{timestamp}/{*pathurl}", get(from_warc))
         .with_state(state);
 
     let listen = TcpListener::bind(opt.bind).await.unwrap();
