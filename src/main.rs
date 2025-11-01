@@ -12,6 +12,7 @@ use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt::{self, Write},
     io::{BufReader as StdBufReader, Seek},
@@ -243,11 +244,12 @@ impl AppState {
                                     Some((s, r)) => format!(
                                         "{} {}",
                                         mangle_url(Some(&base_url), s, timestamp)
-                                            .unwrap_or_else(|| s.to_string()),
+                                            .unwrap_or(Cow::Borrowed(s)),
                                         r
                                     ),
                                     None => mangle_url(Some(&base_url), &s, timestamp)
-                                        .unwrap_or_else(|| s.to_string()),
+                                        .unwrap_or(Cow::Borrowed(&s))
+                                        .to_string(),
                                 })
                                 .map(|s| encode_double_quoted_attribute(&s).to_string())
                                 .collect();
@@ -288,9 +290,9 @@ impl AppState {
     }
 }
 
-fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> {
+fn mangle_url<'a>(base: Option<&Url>, join: &'a str, timestamp: u64) -> Option<Cow<'a, str>> {
     if join.starts_with("data:") {
-        return Some(join.to_string());
+        return Some(Cow::Borrowed(join));
     }
     let url = if let Some(base) = base {
         base.join(join).ok()
@@ -307,7 +309,7 @@ fn mangle_url(base: Option<&Url>, join: &str, timestamp: u64) -> Option<String> 
     if ptime.is_empty() {
         ptime.push('*');
     }
-    Some(format!("/web/{ptime}/{enc}"))
+    Some(Cow::Owned(format!("/web/{ptime}/{enc}")))
 }
 
 fn demangle(inp: &str) -> Option<(u64, Url)> {
