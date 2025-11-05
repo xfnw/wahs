@@ -561,12 +561,14 @@ async fn search(
 <meta charset=UTF-8>
 <meta name=viewport content=\"width=device-width, initial-scale=1\">
 <title>wahs search</title><h1>search for urls</h1><form action=?>
-<label>search <input name=q autofocus onfocus=this.select() value=\""
+<label>search <input name=q onfocus=this.select() "
         .to_string();
     if let Some(query) = query {
-        out.push_str(&encode_double_quoted_attribute(query));
+        write!(out, "value=\"{}\"", &encode_double_quoted_attribute(query)).unwrap();
+    } else {
+        out.push_str("autofocus");
     }
-    out.push_str("\"></label> <input type=submit> </form>");
+    out.push_str("></label> <input type=submit> </form>");
 
     if let Some(query) = query {
         let (mut neg, pos): (Vec<_>, Vec<_>) = query
