@@ -741,6 +741,11 @@ async fn reindex_forever(state: Arc<AppState>, interval: Option<u64>) {
     let mut hup = signal(SignalKind::hangup()).expect("sighup should exist");
     let mut old_size = 0;
     loop {
+        {
+            let mut log = state.log.write().await;
+            log.clear();
+            log.push_str("indexing...");
+        }
         let (map, stat) = reindex(&state.directories, old_size).await;
         old_size = map.len();
         {
