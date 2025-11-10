@@ -27,9 +27,10 @@ use tokio::{
     fs::File,
     io::{AsyncBufReadExt, BufReader},
     net::TcpListener,
+    signal::unix::{SignalKind, signal},
     sync::RwLock,
     task::spawn_blocking,
-    time::sleep,
+    time::timeout,
 };
 use url::Url;
 use warc::{WarcHeader, WarcReader};
@@ -45,8 +46,8 @@ struct Opt {
     #[argh(option, short = 'b', default = "\"[::1]:0\".parse().unwrap()")]
     bind: SocketAddr,
     /// seconds to wait between rereading cdx files
-    #[argh(option, default = "300")]
-    interval: u64,
+    #[argh(option)]
+    interval: Option<u64>,
     /// turn off the rather inefficent search page.
     /// probably a good idea if you want to expose wahs to the internet.
     #[argh(switch)]
@@ -735,8 +736,9 @@ async fn reindex(
     (map, log)
 }
 
-async fn reindex_forever(state: Arc<AppState>, interval: u64) {
-    let interval = Duration::from_secs(interval);
+async fn reindex_forever(state: Arc<AppState>, interval: Option<u64>) {
+    let interval = interval.map(Duration::from_secs);
+    let mut hup = signal(SignalKind::hangup()).expect("sighup should exist");
     let mut old_size = 0;
     loop {
         let (map, stat) = reindex(&state.directories, old_size).await;
@@ -747,7 +749,11 @@ async fn reindex_forever(state: Arc<AppState>, interval: u64) {
             let mut log = state.log.write().await;
             *log = stat;
         }
-        sleep(interval).await;
+        if let Some(interval) = interval {
+            _ = timeout(interval, hup.recv()).await;
+        } else {
+            hup.recv().await;
+        }
     }
 }
 
