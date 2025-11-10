@@ -1,15 +1,15 @@
 use libflate::gzip::Decoder as GzipDecoder;
 use std::{
     borrow::Cow,
+    cell::Cell,
     env::args,
     io::{BufReader, Read},
-    sync::atomic::{AtomicU64, Ordering},
 };
 use warc::{WarcHeader, WarcReader};
 
 struct GzipReader<'a, T> {
     inner: Option<GzipDecoder<LengthReader<'a, T>>>,
-    last_member: &'a AtomicU64,
+    last_member: &'a Cell<u64>,
 }
 
 // adapted from libflate's MultiDecoder Read implementation
@@ -21,14 +21,14 @@ impl<T: Read> Read for GzipReader<'_, T> {
         };
         let size = inner.read(buf)?;
         if size == 0 {
-            let start = inner.as_inner_ref().count.load(Ordering::Relaxed);
+            let start = inner.as_inner_ref().count.get();
             let mut inner = match GzipDecoder::new(self.inner.take().unwrap().into_inner()) {
                 Ok(i) => i,
                 Err(e) => {
                     return Err(e);
                 }
             };
-            self.last_member.store(start, Ordering::Relaxed);
+            self.last_member.set(start);
             let newsize = inner.read(buf);
             self.inner = Some(inner);
             newsize
@@ -40,14 +40,14 @@ impl<T: Read> Read for GzipReader<'_, T> {
 
 struct LengthReader<'a, T> {
     inner: T,
-    count: &'a AtomicU64,
+    count: &'a Cell<u64>,
 }
 
 impl<T: Read> Read for LengthReader<'_, T> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let res = self.inner.read(buf);
         if let Ok(size) = res {
-            self.count.fetch_add(size as u64, Ordering::Relaxed);
+            self.count.update(|x| x + size as u64);
         }
         res
     }
@@ -57,8 +57,8 @@ fn main() {
     println!(" CDX a b m s k V g u");
 
     for filename in args().skip(1) {
-        let last_member = AtomicU64::new(0);
-        let length = AtomicU64::new(0);
+        let last_member = Cell::new(0);
+        let length = Cell::new(0);
         let file = std::fs::File::open(&filename).expect("open warc file");
         let file = WarcReader::new(BufReader::new(GzipReader {
             inner: Some(
@@ -115,7 +115,7 @@ fn main() {
             let k = k.split_once(':').map_or(k.as_ref(), |(_, k)| k);
             // V - file offset (before decompression)
             // should be uppercase, but rust is anal about naming
-            let v = last_member.load(Ordering::Relaxed);
+            let v = last_member.get();
             // g - file name
             let g = &filename;
             // u - ??? missing from the cdx format reference, wget uses warc id
