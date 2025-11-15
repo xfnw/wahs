@@ -52,7 +52,7 @@ struct Opt {
     /// probably a good idea if you want to expose wahs to the internet.
     #[argh(switch)]
     no_search: bool,
-    /// path(s) to directory of warc and cdx files
+    /// path(s) to directory of cdx files
     #[argh(positional)]
     directory: Vec<PathBuf>,
 }
