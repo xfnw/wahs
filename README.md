@@ -1,5 +1,5 @@
 # wahs
 serve warc files on http
 
-semi-works, but is in need of major refactoring
-
+currently most sites that do not heavily rely on javascript work
+decently
