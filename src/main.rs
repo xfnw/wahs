@@ -179,7 +179,7 @@ impl AppState {
             );
         }
         let is_compressed = if let Some(encoding) = headers.get("x-archive-orig-content-encoding")
-            // a content-encoding of "none" is not allowed:
+            // a content-encoding of "none" is not a thing that exists:
             // https://www.iana.org/assignments/http-parameters/http-parameters.xhtml#content-coding
             // despite this, some sites still set it...
             && !encoding.as_bytes().eq_ignore_ascii_case(b"none")
