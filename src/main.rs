@@ -87,14 +87,14 @@ struct AppState {
 impl AppState {
     async fn get_warc_response(
         &self,
-        req_url: String,
+        req_url: &str,
         timestamp: u64,
     ) -> Result<WarcResponse, ResponseError> {
-        let base_url = Url::parse(&req_url).map_err(ResponseError::UrlParse)?;
+        let base_url = Url::parse(req_url).map_err(ResponseError::UrlParse)?;
         let loc = {
             let cdx_map = self.cdx_map.read().await;
-            let Some(ts_map) = cdx_map.get(&req_url) else {
-                return Err(ResponseError::NotFound(req_url));
+            let Some(ts_map) = cdx_map.get(base_url.as_str()) else {
+                return Err(ResponseError::NotFound(base_url.to_string()));
             };
             match ts_map.get(&timestamp) {
                 Some(l) => l.clone(),
@@ -104,7 +104,7 @@ impl AppState {
                         .next()
                         .or_else(|| ts_map.range(..timestamp).next_back())
                     {
-                        let loc = mangle_url(None, &req_url, newt).unwrap();
+                        let loc = mangle_url(None, base_url.as_str(), newt).unwrap();
                         let mut headers = HeaderMap::new();
                         headers.insert(
                             "location",
@@ -122,9 +122,12 @@ impl AppState {
         };
         let warc_path = loc.path.clone();
 
-        let buffered = spawn_blocking(move || read_warc_record(&req_url, &loc, timestamp))
-            .await
-            .map_err(ResponseError::TokioJoin)??;
+        let buffered = {
+            let req_url = base_url.to_string();
+            spawn_blocking(move || read_warc_record(&req_url, &loc, timestamp))
+                .await
+                .map_err(ResponseError::TokioJoin)??
+        };
 
         let response = buffered.body();
         let mut headers = [httparse::EMPTY_HEADER; 256];
@@ -532,7 +535,7 @@ async fn from_warc(
         requested_url.push_str(&query);
     }
     let timestamp = process_timestamp(&timestamp);
-    let response = match state.get_warc_response(requested_url, timestamp).await {
+    let response = match state.get_warc_response(&requested_url, timestamp).await {
         Ok(r) => r,
         Err(e) => {
             let mut headers = HeaderMap::new();
