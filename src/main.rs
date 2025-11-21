@@ -300,14 +300,14 @@ impl AppState {
 }
 
 fn mangle_url<'a>(base: Option<&Url>, join: &'a str, timestamp: u64) -> Option<Cow<'a, str>> {
-    if join.starts_with("data:") {
-        return Some(Cow::Borrowed(join));
-    }
     let url = if let Some(base) = base {
         base.join(join).ok()
     } else {
         Url::parse(join).ok()
     }?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Some(Cow::Borrowed(join));
+    }
     let url = url.as_str();
     let stop = url.find(['#', '?']).unwrap_or(url.len());
     let mut enc = utf8_percent_encode(&url[..stop], URL_UNSAFE).to_string();
