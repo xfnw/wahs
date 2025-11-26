@@ -478,11 +478,13 @@ impl<'a> Iterator for UnChonk<'a> {
             len += digit as usize;
             self.0 = &self.0[1..];
         }
-        if len == 0 || self.0.len() < len + 4 {
+        if len == 0
+            || self.0.len() < len + 4
+            || &self.0[..2] != b"\r\n"
+            || &self.0[len + 2..len + 4] != b"\r\n"
+        {
             return None;
         }
-        assert_eq!(&self.0[..2], b"\r\n");
-        assert_eq!(&self.0[len + 2..len + 4], b"\r\n");
         let out = &self.0[2..len + 2];
         self.0 = &self.0[len + 4..];
         Some(out)
