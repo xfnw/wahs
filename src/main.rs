@@ -214,6 +214,12 @@ impl AppState {
             && (ct.eq_ignore_ascii_case("text/html")
                 || ct.eq_ignore_ascii_case("application/xhtml+xml"))
         {
+            let tag_base = extract_base(body, is_chunked);
+            let base_url = tag_base
+                .as_ref()
+                .and_then(|t| base_url.join(t).ok())
+                .unwrap_or(base_url);
+
             let mut output = vec![];
             let mut rewriter = HtmlRewriter::new(
                 lol_html::Settings {
@@ -309,6 +315,37 @@ impl AppState {
             body,
         })
     }
+}
+
+fn extract_base(body: &[u8], is_chunked: bool) -> Option<String> {
+    let mut out = None;
+    let mut rewriter = HtmlRewriter::new(
+        lol_html::Settings {
+            element_content_handlers: vec![element!("base[href]", |el| {
+                let Some(href) = el.get_attribute("href") else {
+                    return Ok(());
+                };
+                let href = decode_html_entities(&href);
+                if out.is_none() {
+                    out = Some(href.to_string());
+                }
+                Ok(())
+            })],
+            ..lol_html::Settings::new()
+        },
+        |_: &[u8]| (),
+    );
+
+    if is_chunked {
+        for chunk in UnChonk(body) {
+            rewriter.write(chunk).ok()?;
+        }
+    } else {
+        rewriter.write(body).ok()?;
+    }
+
+    _ = rewriter.end();
+    out
 }
 
 fn mangle_url<'a>(base: Option<&Url>, join: &'a str, timestamp: u64) -> Option<Cow<'a, str>> {
