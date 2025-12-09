@@ -153,6 +153,7 @@ impl AppState {
             HeaderValue::from_str(&format!("<{base_url}>; rel=original"))
                 .map_err(ResponseError::HeaderBorked)?,
         );
+        headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
         let content_type = headers
             .get("x-archive-orig-content-type")
             .cloned()
@@ -263,6 +264,10 @@ impl AppState {
                                 .map(|s| encode_double_quoted_attribute(&s).to_string())
                                 .collect();
                             _ = el.set_attribute("srcset", &srcset.join(" "));
+                            Ok(())
+                        }),
+                        element!("meta[name=referrer]", |el| {
+                            el.remove();
                             Ok(())
                         }),
                     ],
