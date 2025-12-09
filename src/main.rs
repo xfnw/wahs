@@ -270,6 +270,13 @@ impl AppState {
                             el.remove();
                             Ok(())
                         }),
+                        element!("base[href]", |el| {
+                            el.remove_attribute("href");
+                            if !el.has_attribute("target") {
+                                el.remove();
+                            }
+                            Ok(())
+                        }),
                     ],
                     ..lol_html::Settings::new()
                 },
