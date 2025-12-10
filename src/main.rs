@@ -276,6 +276,14 @@ impl AppState {
                             el.remove();
                             Ok(())
                         }),
+                        element!("base[href]", |el| {
+                            let Some(url) = mangle_url(Some(&base_url), "", timestamp) else {
+                                return Ok(());
+                            };
+                            let url = encode_double_quoted_attribute(&url);
+                            _ = el.set_attribute("href", &url);
+                            Ok(())
+                        }),
                     ],
                     ..lol_html::Settings::new()
                 },
