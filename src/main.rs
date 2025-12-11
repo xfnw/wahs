@@ -153,7 +153,6 @@ impl AppState {
             HeaderValue::from_str(&format!("<{base_url}>; rel=original"))
                 .map_err(ResponseError::HeaderBorked)?,
         );
-        headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
         let content_type = headers
             .get("x-archive-orig-content-type")
             .cloned()
@@ -169,6 +168,20 @@ impl AppState {
                 "default-src 'self' 'unsafe-eval' 'unsafe-inline' data: blob:",
             ),
         );
+        headers.insert(
+            "cross-origin-opener-policy",
+            HeaderValue::from_static("same-origin"),
+        );
+        headers.insert(
+            "cross-origin-resource-policy",
+            HeaderValue::from_static("cross-origin"),
+        );
+        headers.insert(
+            "cross-origin-embedder-policy",
+            HeaderValue::from_static("require-corp"),
+        );
+        headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
+        headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
         if let Some(location) = headers
             .get("x-archive-orig-location")
             .and_then(|h| h.to_str().ok())
