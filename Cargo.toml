@@ -16,6 +16,7 @@ percent-encoding = "2.3.1"
 lol_html = "2.7.0"
 libflate = "1"
 html-escape = "0.2.13"
+patricia_tree = "0.10.1"
 
 [[bin]]
 name = "gencdx"

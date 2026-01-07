@@ -10,10 +10,11 @@ use html_escape::{decode_html_entities, encode_double_quoted_attribute, encode_t
 use libflate::gzip::MultiDecoder as GzipReader;
 use lol_html::{HtmlRewriter, element};
 use mimalloc::MiMalloc;
+use patricia_tree::StringPatriciaMap;
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
     io::{BufReader as StdBufReader, Seek},
     net::SocketAddr,
@@ -79,7 +80,7 @@ struct WarcLocation {
 #[derive(Debug)]
 struct AppState {
     directories: Vec<PathBuf>,
-    cdx_map: RwLock<HashMap<String, BTreeMap<u64, WarcLocation>>>,
+    cdx_map: RwLock<StringPatriciaMap<BTreeMap<u64, WarcLocation>>>,
     log: RwLock<String>,
     search_enabled: bool,
 }
@@ -653,20 +654,20 @@ async fn search(
             !w.is_empty()
         });
         out.push_str("<h2>results</h2><ul>");
-        let cdx_map = state.cdx_map.read().await;
-        let mut results: Vec<_> = cdx_map
+        for res in state
+            .cdx_map
+            .read()
+            .await
             .keys()
             .filter(|u| pos.iter().all(|w| u.contains(w)) && neg.iter().all(|w| !u.contains(w)))
             .take(1000)
-            .collect();
-        results.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-        for res in results {
-            if let Some(mangled) = mangle_url(None, res, 0) {
+        {
+            if let Some(mangled) = mangle_url(None, &res, 0) {
                 write!(
                     out,
                     "<li><a href=\"{}\">{}</a></li>",
                     encode_double_quoted_attribute(&mangled),
-                    encode_text(res)
+                    encode_text(&res)
                 )
                 .unwrap();
             }
@@ -702,7 +703,7 @@ async fn fallback(
 
 async fn read_cdx(
     cdxname: &Path,
-    map: &mut HashMap<String, BTreeMap<u64, WarcLocation>>,
+    map: &mut StringPatriciaMap<BTreeMap<u64, WarcLocation>>,
     dedup: &mut BTreeSet<Arc<PathBuf>>,
 ) -> Result<(), &'static str> {
     let parent = cdxname.parent().ok_or("no parent")?;
@@ -757,7 +758,13 @@ async fn read_cdx(
             w
         };
 
-        map.entry(url.to_string()).or_default().insert(
+        let inner = if let Some(i) = map.get_mut(url) {
+            i
+        } else {
+            map.insert(url, BTreeMap::new());
+            map.get_mut(url).unwrap()
+        };
+        inner.insert(
             date,
             WarcLocation {
                 path: warcname,
@@ -769,12 +776,9 @@ async fn read_cdx(
     Ok(())
 }
 
-async fn reindex(
-    dirs: &[PathBuf],
-    old_size: usize,
-) -> (HashMap<String, BTreeMap<u64, WarcLocation>>, String) {
+async fn reindex(dirs: &[PathBuf]) -> (StringPatriciaMap<BTreeMap<u64, WarcLocation>>, String) {
     let mut dedup = BTreeSet::new();
-    let mut map = HashMap::with_capacity(old_size);
+    let mut map = StringPatriciaMap::new();
     let mut log = String::new();
 
     for dirname in dirs {
@@ -804,7 +808,6 @@ async fn reindex(
         writeln!(log, "indexed directory {dirname:?}").unwrap();
     }
 
-    map.shrink_to_fit();
     write!(log, "finished indexing {} urls!", map.len()).unwrap();
     (map, log)
 }
@@ -812,15 +815,13 @@ async fn reindex(
 async fn reindex_forever(state: Arc<AppState>, interval: Option<u64>) {
     let interval = interval.map(Duration::from_secs);
     let mut hup = signal(SignalKind::hangup()).expect("sighup should exist");
-    let mut old_size = 0;
     loop {
         {
             let mut log = state.log.write().await;
             log.clear();
             log.push_str("indexing...");
         }
-        let (map, stat) = reindex(&state.directories, old_size).await;
-        old_size = map.len();
+        let (map, stat) = reindex(&state.directories).await;
         {
             let mut cdx_map = state.cdx_map.write().await;
             *cdx_map = map;
@@ -845,7 +846,7 @@ async fn main() {
     }
     let state = Arc::new(AppState {
         directories,
-        cdx_map: RwLock::new(HashMap::new()),
+        cdx_map: RwLock::new(StringPatriciaMap::new()),
         log: RwLock::new("not indexed yet...".to_string()),
         search_enabled: !opt.no_search,
     });
