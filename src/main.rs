@@ -36,6 +36,8 @@ use tokio::{
 use url::Url;
 use warc::{WarcHeader, WarcReader};
 
+mod body_extract;
+
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
