@@ -99,28 +99,27 @@ impl AppState {
             let Some(ts_map) = cdx_map.get(base_url.as_str()) else {
                 return Err(ResponseError::NotFound(base_url.to_string()));
             };
-            match ts_map.get(&timestamp) {
-                Some(l) => l.clone(),
-                None => {
-                    if let Some((&newt, _)) = ts_map
-                        .range(timestamp..)
-                        .next()
-                        .or_else(|| ts_map.range(..timestamp).next_back())
-                    {
-                        let loc = mangle_url(None, base_url.as_str(), newt).unwrap();
-                        let mut headers = HeaderMap::new();
-                        headers.insert(
-                            "location",
-                            HeaderValue::from_str(&loc).map_err(ResponseError::HeaderBorked)?,
-                        );
-                        return Ok(WarcResponse {
-                            code: StatusCode::TEMPORARY_REDIRECT.into(),
-                            headers,
-                            body: vec![],
-                        });
-                    }
-                    unreachable!();
+            if let Some(l) = ts_map.get(&timestamp) {
+                l.clone()
+            } else {
+                if let Some((&newt, _)) = ts_map
+                    .range(timestamp..)
+                    .next()
+                    .or_else(|| ts_map.range(..timestamp).next_back())
+                {
+                    let loc = mangle_url(None, base_url.as_str(), newt).unwrap();
+                    let mut headers = HeaderMap::new();
+                    headers.insert(
+                        "location",
+                        HeaderValue::from_str(&loc).map_err(ResponseError::HeaderBorked)?,
+                    );
+                    return Ok(WarcResponse {
+                        code: StatusCode::TEMPORARY_REDIRECT.into(),
+                        headers,
+                        body: vec![],
+                    });
                 }
+                unreachable!();
             }
         };
         let warc_path = loc.path.clone();
@@ -575,7 +574,7 @@ async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
 }
 
 fn process_timestamp(inp: &str) -> u64 {
-    let mut numbers = inp.chars().take_while(|c| c.is_ascii_digit());
+    let mut numbers = inp.chars().take_while(char::is_ascii_digit);
     let mut num = 0;
     for _ in 0..14 {
         num *= 10;
@@ -637,7 +636,7 @@ async fn search(
     if let Some(query) = query {
         let (mut neg, pos): (Vec<_>, Vec<_>) = query
             .split_ascii_whitespace()
-            .partition(|w| w.starts_with("-"));
+            .partition(|w| w.starts_with('-'));
         neg.retain_mut(|w| {
             *w = &w[1..];
             !w.is_empty()
@@ -790,7 +789,6 @@ async fn reindex(dirs: &[PathBuf]) -> (StringPatriciaMap<BTreeMap<u64, WarcLocat
 
             if let Err(e) = read_cdx(&name, &mut map, &mut dedup).await {
                 writeln!(log, "could not index {name:?}: {e}").unwrap();
-                continue;
             }
         }
 

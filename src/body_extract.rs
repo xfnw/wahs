@@ -23,7 +23,7 @@ impl<'a> BodyExtract<'a> {
             .chain(transfer_encoding.iter())
             .map(|h| h.as_bytes())
             .flat_map(|h| h.split(|&b| b == b','))
-            .map(|e| e.trim_ascii())
+            .map(<[u8]>::trim_ascii)
             .rev();
         ExtractLayer::Slice(body)
             .add_layers(layers)
@@ -31,7 +31,7 @@ impl<'a> BodyExtract<'a> {
     }
 }
 
-impl<'a> Read for BodyExtract<'a> {
+impl Read for BodyExtract<'_> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.inner.read(buf)
     }
@@ -44,7 +44,7 @@ enum ExtractLayer<'a> {
     // TODO: support zstd and brotli too?
 }
 
-impl<'a> ExtractLayer<'a> {
+impl ExtractLayer<'_> {
     fn add_layers<'b, T>(self, mut layers: T) -> Option<Self>
     where
         T: Iterator<Item = &'b [u8]>,
