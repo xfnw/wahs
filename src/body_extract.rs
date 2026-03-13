@@ -1,15 +1,48 @@
+use axum::http::HeaderValue;
 use std::{
     cmp::min,
     io::{Read, Result},
 };
 
-pub enum ExtractLayer<'a> {
+pub struct BodyExtract<'a> {
+    inner: ExtractLayer<'a>,
+}
+
+impl<'a> BodyExtract<'a> {
+    pub fn new(
+        body: &'a [u8],
+        transfer_encoding: Option<&HeaderValue>,
+        content_encoding: Option<&HeaderValue>,
+    ) -> Option<Self> {
+        // squishing the transfer encoding and content encoding
+        // together like this is incorrect, they have different
+        // allowed values, i doubt it matters though
+        let layers = content_encoding
+            .iter()
+            .chain(transfer_encoding.iter())
+            .map(|h| h.as_bytes())
+            .flat_map(|h| h.split(|&b| b == b','))
+            .map(|e| e.trim_ascii())
+            .rev();
+        ExtractLayer::Slice(body)
+            .add_layers(layers)
+            .map(|inner| Self { inner })
+    }
+}
+
+impl<'a> Read for BodyExtract<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+enum ExtractLayer<'a> {
     Slice(&'a [u8]),
     Chunked(ChunkedExtract<'a>),
 }
 
 impl<'a> ExtractLayer<'a> {
-    pub fn add_layers<'b, T>(self, mut layers: T) -> Option<Self>
+    fn add_layers<'b, T>(self, mut layers: T) -> Option<Self>
     where
         T: Iterator<Item = &'b [u8]>,
     {
@@ -33,13 +66,13 @@ impl Read for ExtractLayer<'_> {
     }
 }
 
-pub struct ChunkedExtract<'a> {
+struct ChunkedExtract<'a> {
     inner: Box<ExtractLayer<'a>>,
     state: ChunkedState,
 }
 
 impl<'a> ChunkedExtract<'a> {
-    pub fn new(inner: ExtractLayer<'a>) -> Self {
+    fn new(inner: ExtractLayer<'a>) -> Self {
         Self {
             inner: Box::new(inner),
             state: ChunkedState::Number { value: 0 },
