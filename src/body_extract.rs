@@ -3,21 +3,51 @@ use std::{
     io::{Read, Result},
 };
 
-pub struct ChunkedExtract {
-    inner: Box<dyn Read>,
+pub enum ExtractLayer<'a> {
+    Slice(&'a [u8]),
+    Chunked(ChunkedExtract<'a>),
+}
+
+impl<'a> ExtractLayer<'a> {
+    pub fn add_layers<'b, T>(self, mut layers: T) -> Option<Self>
+    where
+        T: Iterator<Item = &'b [u8]>,
+    {
+        let Some(next) = layers.next() else {
+            return Some(self);
+        };
+        match next {
+            b"chunked" => Self::Chunked(ChunkedExtract::new(self)),
+            _ => return None,
+        }
+        .add_layers(layers)
+    }
+}
+
+impl Read for ExtractLayer<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        match self {
+            Self::Slice(l) => l.read(buf),
+            Self::Chunked(l) => l.read(buf),
+        }
+    }
+}
+
+pub struct ChunkedExtract<'a> {
+    inner: Box<ExtractLayer<'a>>,
     state: ChunkedState,
 }
 
-impl ChunkedExtract {
-    pub fn new(inner: Box<dyn Read>) -> Self {
+impl<'a> ChunkedExtract<'a> {
+    pub fn new(inner: ExtractLayer<'a>) -> Self {
         Self {
-            inner,
+            inner: Box::new(inner),
             state: ChunkedState::Number { value: 0 },
         }
     }
 }
 
-impl Read for ChunkedExtract {
+impl Read for ChunkedExtract<'_> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         match self.state {
             ChunkedState::Content { remaining } => {
@@ -74,7 +104,7 @@ enum ChunkedState {
     Done,
 }
 
-fn expect_eat(inp: &mut Box<dyn Read>, expected: u8) -> Result<()> {
+fn expect_eat(inp: &mut impl Read, expected: u8) -> Result<()> {
     let mut buf = [0u8; 1];
     inp.read_exact(&mut buf)?;
 
