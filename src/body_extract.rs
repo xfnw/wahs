@@ -54,7 +54,7 @@ impl<'a> ExtractLayer<'a> {
         };
         match next {
             b"chunked" => Self::Chunked(ChunkedExtract::new(self)),
-            b"gzip" => Self::Gzip(GzipExtract::new(self)),
+            b"gzip" => Self::Gzip(GzipExtract::new(self)?),
             // a content-encoding of "none" is not a thing that exists:
             // https://www.iana.org/assignments/http-parameters/http-parameters.xhtml#content-coding
             // despite this, some sites still set it...
@@ -165,10 +165,10 @@ struct GzipExtract<'a> {
 }
 
 impl<'a> GzipExtract<'a> {
-    fn new(inner: ExtractLayer<'a>) -> Self {
-        Self {
-            inner: MultiDecoder::new(Box::new(inner)).unwrap(),
-        }
+    fn new(inner: ExtractLayer<'a>) -> Option<Self> {
+        Some(Self {
+            inner: MultiDecoder::new(Box::new(inner)).ok()?,
+        })
     }
 }
 
