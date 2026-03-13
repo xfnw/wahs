@@ -55,6 +55,10 @@ impl<'a> ExtractLayer<'a> {
         match next {
             b"chunked" => Self::Chunked(ChunkedExtract::new(self)),
             b"gzip" => Self::Gzip(GzipExtract::new(self)),
+            // a content-encoding of "none" is not a thing that exists:
+            // https://www.iana.org/assignments/http-parameters/http-parameters.xhtml#content-coding
+            // despite this, some sites still set it...
+            b"none" => self,
             _ => return None,
         }
         .add_layers(layers)
