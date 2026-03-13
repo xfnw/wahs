@@ -553,40 +553,6 @@ impl fmt::Display for ResponseError {
     }
 }
 
-#[derive(Debug)]
-struct UnChonk<'a>(&'a [u8]);
-
-impl<'a> Iterator for UnChonk<'a> {
-    type Item = &'a [u8];
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut len = 0;
-        while let Some(digit) = self.0.first().and_then(|&b| unhex_ascii(b)) {
-            len <<= 4;
-            len += digit as usize;
-            self.0 = &self.0[1..];
-        }
-        if len == 0
-            || self.0.len() < len + 4
-            || &self.0[..2] != b"\r\n"
-            || &self.0[len + 2..len + 4] != b"\r\n"
-        {
-            return None;
-        }
-        let out = &self.0[2..len + 2];
-        self.0 = &self.0[len + 4..];
-        Some(out)
-    }
-}
-
-fn unhex_ascii(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'A'..=b'F' => Some(b - b'A' + 0xa),
-        b'a'..=b'f' => Some(b - b'a' + 0xa),
-        _ => None,
-    }
-}
-
 async fn root(State(state): State<Arc<AppState>>) -> Html<String> {
     let log = state.log.read().await;
     Html(format!(
