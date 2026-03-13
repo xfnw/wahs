@@ -16,7 +16,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
-    io::{BufReader as StdBufReader, Seek},
+    io::{BufReader as StdBufReader, Read, Seek},
     net::SocketAddr,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -195,28 +195,11 @@ impl AppState {
                 HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
             );
         }
-        let is_compressed = if let Some(encoding) = headers.get("x-archive-orig-content-encoding")
-            // a content-encoding of "none" is not a thing that exists:
-            // https://www.iana.org/assignments/http-parameters/http-parameters.xhtml#content-coding
-            // despite this, some sites still set it...
-            && !encoding.as_bytes().eq_ignore_ascii_case(b"none")
-        {
-            headers.insert("content-encoding", encoding.clone());
-            true
-        } else {
-            false
-        };
         let content_type = headers
             .get("content-type")
             .expect("we just added it lol")
             .to_str()
             .unwrap_or("application/octet-stream");
-        let is_chunked = headers
-            .get("x-archive-orig-transfer-encoding")
-            // transfer-encoding is technically a list of directives,
-            // but the (seldom used) other options are compression stuff
-            // which we would not be able to handle anyways
-            .is_some_and(|h| h == "chunked");
 
         let body = &response[body_offset..];
 
@@ -226,37 +209,59 @@ impl AppState {
         // FIXME: treating xhtml like html is very naughty
         // people are usually nice enough to make their xhtml
         // html-compatible-ish tho
-        let body = if !is_compressed
-            && (ct.eq_ignore_ascii_case("text/html")
-                || ct.eq_ignore_ascii_case("application/xhtml+xml"))
-        {
-            let tag_base = extract_base(body, is_chunked);
+        let body = if (ct.eq_ignore_ascii_case("text/html")
+            || ct.eq_ignore_ascii_case("application/xhtml+xml"))
+            && let Some(mut extractor) = body_extract::BodyExtract::new(
+                body,
+                headers.get("x-archive-orig-transfer-encoding"),
+                headers.get("x-archive-orig-content-encoding"),
+            ) {
+            // grumble grumble libflate stuff not implementing Clone
+            let extra_extractor = body_extract::BodyExtract::new(
+                body,
+                headers.get("x-archive-orig-transfer-encoding"),
+                headers.get("x-archive-orig-content-encoding"),
+            )
+            .unwrap();
+            let tag_base = extract_base(extra_extractor);
             let base_url = tag_base
                 .as_ref()
                 .and_then(|t| base_url.join(t).ok())
                 .unwrap_or(base_url);
 
             let mut output = vec![];
+            let mut chunk = [0u8; 8192];
             let mut rewriter = setup_rewrite(timestamp, &base_url, &mut output);
 
-            if is_chunked {
-                for chunk in UnChonk(body) {
-                    rewriter.write(chunk).map_err(ResponseError::RewriteHtml)?;
-                }
-            } else {
-                rewriter.write(body).map_err(ResponseError::RewriteHtml)?;
+            while let len @ 1.. = extractor
+                .read(&mut chunk)
+                .map_err(ResponseError::ExtractBody)?
+            {
+                rewriter
+                    .write(&chunk[..len])
+                    .map_err(ResponseError::RewriteHtml)?;
             }
 
             rewriter.end().map_err(ResponseError::RewriteHtml)?;
             output
-        } else if is_chunked {
-            let mut output = vec![];
-            for chunk in UnChonk(body) {
-                output.extend_from_slice(chunk);
+        } else if let Some(mut extractor) = body_extract::BodyExtract::new(
+            body,
+            headers.get("x-archive-orig-transfer-encoding"),
+            // do not bother undoing the content encoding, we can just
+            // sent it out as is, (unlike the transfer encoding where
+            // that can make axum panic >:( )
+            None,
+        ) {
+            if let Some(encoding) = headers.get("x-archive-orig-content-encoding") {
+                headers.insert("content-encoding", encoding.clone());
             }
+            let mut output = vec![];
+            extractor
+                .read_to_end(&mut output)
+                .map_err(ResponseError::ExtractBody)?;
             output
         } else {
-            body.to_vec()
+            return Err(ResponseError::UnsupportedEncoding);
         };
 
         Ok(WarcResponse {
@@ -342,7 +347,7 @@ fn setup_rewrite<'a>(
     )
 }
 
-fn extract_base(body: &[u8], is_chunked: bool) -> Option<String> {
+fn extract_base(mut extractor: body_extract::BodyExtract) -> Option<String> {
     let mut out = None;
     let mut rewriter = HtmlRewriter::new(
         lol_html::Settings {
@@ -361,12 +366,9 @@ fn extract_base(body: &[u8], is_chunked: bool) -> Option<String> {
         |_: &[u8]| (),
     );
 
-    if is_chunked {
-        for chunk in UnChonk(body) {
-            rewriter.write(chunk).ok()?;
-        }
-    } else {
-        rewriter.write(body).ok()?;
+    let mut chunk = [0u8; 8192];
+    while let len @ 1.. = extractor.read(&mut chunk).ok()? {
+        rewriter.write(&chunk[..len]).ok()?;
     }
 
     _ = rewriter.end();
@@ -472,6 +474,8 @@ enum ResponseError {
     WarcMissing(String),
     RewriteHtml(lol_html::errors::RewritingError),
     HeaderBorked(axum::http::header::InvalidHeaderValue),
+    ExtractBody(std::io::Error),
+    UnsupportedEncoding,
 }
 
 impl fmt::Display for ResponseError {
@@ -535,6 +539,15 @@ impl fmt::Display for ResponseError {
                 f,
                 "<h1>invalid header value</h1><p>{}</p>",
                 encode_text(&error.to_string())
+            ),
+            Self::ExtractBody(error) => write!(
+                f,
+                "<h1>could not extract body</h1><p>{}</p>",
+                encode_text(&error.to_string())
+            ),
+            Self::UnsupportedEncoding => write!(
+                f,
+                "<h1>unsupported transfer-encoding</h1><p>transfer-encoding is not nice</p>",
             ),
         }
     }
