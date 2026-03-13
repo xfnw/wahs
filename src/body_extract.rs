@@ -1,4 +1,5 @@
 use axum::http::HeaderValue;
+use libflate::gzip::MultiDecoder;
 use std::{
     cmp::min,
     io::{Read, Result},
@@ -39,6 +40,8 @@ impl<'a> Read for BodyExtract<'a> {
 enum ExtractLayer<'a> {
     Slice(&'a [u8]),
     Chunked(ChunkedExtract<'a>),
+    Gzip(GzipExtract<'a>),
+    // TODO: support zstd and brotli too?
 }
 
 impl<'a> ExtractLayer<'a> {
@@ -51,6 +54,7 @@ impl<'a> ExtractLayer<'a> {
         };
         match next {
             b"chunked" => Self::Chunked(ChunkedExtract::new(self)),
+            b"gzip" => Self::Gzip(GzipExtract::new(self)),
             _ => return None,
         }
         .add_layers(layers)
@@ -62,6 +66,7 @@ impl Read for ExtractLayer<'_> {
         match self {
             Self::Slice(l) => l.read(buf),
             Self::Chunked(l) => l.read(buf),
+            Self::Gzip(l) => l.read(buf),
         }
     }
 }
@@ -149,4 +154,22 @@ fn expect_eat(inp: &mut impl Read, expected: u8) -> Result<()> {
     }
 
     Ok(())
+}
+
+struct GzipExtract<'a> {
+    inner: MultiDecoder<Box<ExtractLayer<'a>>>,
+}
+
+impl<'a> GzipExtract<'a> {
+    fn new(inner: ExtractLayer<'a>) -> Self {
+        Self {
+            inner: MultiDecoder::new(Box::new(inner)).unwrap(),
+        }
+    }
+}
+
+impl Read for GzipExtract<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.inner.read(buf)
+    }
 }
