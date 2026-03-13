@@ -237,74 +237,7 @@ impl AppState {
                 .unwrap_or(base_url);
 
             let mut output = vec![];
-            let mut rewriter = HtmlRewriter::new(
-                lol_html::Settings {
-                    element_content_handlers: vec![
-                        element!("[href]", |el| {
-                            let Some(href) = el.get_attribute("href") else {
-                                return Ok(());
-                            };
-                            let href = decode_html_entities(&href);
-                            let Some(url) = mangle_url(Some(&base_url), &href, timestamp) else {
-                                return Ok(());
-                            };
-                            let url = encode_double_quoted_attribute(&url);
-                            _ = el.set_attribute("href", &url);
-                            Ok(())
-                        }),
-                        element!("[src]", |el| {
-                            let Some(src) = el.get_attribute("src") else {
-                                return Ok(());
-                            };
-                            let src = decode_html_entities(&src);
-                            let Some(url) = mangle_url(Some(&base_url), &src, timestamp) else {
-                                return Ok(());
-                            };
-                            let url = encode_double_quoted_attribute(&url);
-                            _ = el.set_attribute("src", &url);
-                            Ok(())
-                        }),
-                        element!("[srcset]", |el| {
-                            let Some(srcset) = el.get_attribute("srcset") else {
-                                return Ok(());
-                            };
-                            let srcset: Vec<_> = srcset
-                                .split_inclusive(',')
-                                .map(str::trim_ascii)
-                                .map(decode_html_entities)
-                                .map(|s| match s.split_once(' ') {
-                                    Some((s, r)) => format!(
-                                        "{} {}",
-                                        mangle_url(Some(&base_url), s, timestamp)
-                                            .unwrap_or(Cow::Borrowed(s)),
-                                        r
-                                    ),
-                                    None => mangle_url(Some(&base_url), &s, timestamp)
-                                        .unwrap_or(Cow::Borrowed(&s))
-                                        .to_string(),
-                                })
-                                .map(|s| encode_double_quoted_attribute(&s).to_string())
-                                .collect();
-                            _ = el.set_attribute("srcset", &srcset.join(" "));
-                            Ok(())
-                        }),
-                        element!("meta[name=referrer]", |el| {
-                            el.remove();
-                            Ok(())
-                        }),
-                        element!("base[href]", |el| {
-                            let Some(url) = mangle_url(Some(&base_url), "", timestamp) else {
-                                return Ok(());
-                            };
-                            let url = encode_double_quoted_attribute(&url);
-                            _ = el.set_attribute("href", &url);
-                            Ok(())
-                        }),
-                    ],
-                    ..lol_html::Settings::new()
-                },
-                |c: &[u8]| output.extend_from_slice(c),
-            );
+            let mut rewriter = setup_rewrite(timestamp, &base_url, &mut output);
 
             if is_chunked {
                 for chunk in UnChonk(body) {
@@ -332,6 +265,81 @@ impl AppState {
             body,
         })
     }
+}
+
+fn setup_rewrite<'a>(
+    timestamp: u64,
+    base_url: &'a Url,
+    output: &mut Vec<u8>,
+) -> HtmlRewriter<'a, impl FnMut(&[u8])> {
+    HtmlRewriter::new(
+        lol_html::Settings {
+            element_content_handlers: vec![
+                element!("[href]", move |el| {
+                    let Some(href) = el.get_attribute("href") else {
+                        return Ok(());
+                    };
+                    let href = decode_html_entities(&href);
+                    let Some(url) = mangle_url(Some(base_url), &href, timestamp) else {
+                        return Ok(());
+                    };
+                    let url = encode_double_quoted_attribute(&url);
+                    _ = el.set_attribute("href", &url);
+                    Ok(())
+                }),
+                element!("[src]", move |el| {
+                    let Some(src) = el.get_attribute("src") else {
+                        return Ok(());
+                    };
+                    let src = decode_html_entities(&src);
+                    let Some(url) = mangle_url(Some(base_url), &src, timestamp) else {
+                        return Ok(());
+                    };
+                    let url = encode_double_quoted_attribute(&url);
+                    _ = el.set_attribute("src", &url);
+                    Ok(())
+                }),
+                element!("[srcset]", move |el| {
+                    let Some(srcset) = el.get_attribute("srcset") else {
+                        return Ok(());
+                    };
+                    let srcset: Vec<_> = srcset
+                        .split_inclusive(',')
+                        .map(str::trim_ascii)
+                        .map(decode_html_entities)
+                        .map(|s| match s.split_once(' ') {
+                            Some((s, r)) => format!(
+                                "{} {}",
+                                mangle_url(Some(base_url), s, timestamp)
+                                    .unwrap_or(Cow::Borrowed(s)),
+                                r
+                            ),
+                            None => mangle_url(Some(base_url), &s, timestamp)
+                                .unwrap_or(Cow::Borrowed(&s))
+                                .to_string(),
+                        })
+                        .map(|s| encode_double_quoted_attribute(&s).to_string())
+                        .collect();
+                    _ = el.set_attribute("srcset", &srcset.join(" "));
+                    Ok(())
+                }),
+                element!("meta[name=referrer]", |el| {
+                    el.remove();
+                    Ok(())
+                }),
+                element!("base[href]", move |el| {
+                    let Some(url) = mangle_url(Some(base_url), "", timestamp) else {
+                        return Ok(());
+                    };
+                    let url = encode_double_quoted_attribute(&url);
+                    _ = el.set_attribute("href", &url);
+                    Ok(())
+                }),
+            ],
+            ..lol_html::Settings::new()
+        },
+        |c: &[u8]| output.extend_from_slice(c),
+    )
 }
 
 fn extract_base(body: &[u8], is_chunked: bool) -> Option<String> {
