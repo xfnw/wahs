@@ -484,7 +484,7 @@ impl fmt::Display for ResponseError {
             "<!DOCTYPE html>
 <meta charset=UTF-8>
 <meta name=viewport content=\"width=device-width, initial-scale=1\">
-<title>error</title>"
+<title>wahs cannot display this page</title>"
         )?;
         match self {
             Self::UrlParse(parse_error) => write!(
