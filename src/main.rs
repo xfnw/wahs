@@ -507,7 +507,7 @@ impl fmt::Display for ResponseError {
             Self::HttpParse => write!(
                 f,
                 "<h1>could not parse http response in warc</h1>
-            <p>... this warc file does have http stuff in it, right?</p>"
+<p>... this warc file does have http stuff in it, right?</p>"
             ),
             Self::OpenWarc(error, path) => write!(
                 f,
@@ -546,7 +546,8 @@ impl fmt::Display for ResponseError {
             ),
             Self::UnsupportedEncoding => write!(
                 f,
-                "<h1>unsupported transfer-encoding</h1><p>transfer-encoding is not nice</p>",
+                "<h1>unsupported transfer-encoding</h1>
+<p>transfer-encoding is not nice</p>",
             ),
         }
     }
