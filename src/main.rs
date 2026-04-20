@@ -387,12 +387,11 @@ fn mangle_url<'a>(base: Option<&Url>, join: &'a str, timestamp: u64) -> Option<C
     let stop = url.find(['#', '?']).unwrap_or(url.len());
     let mut enc = utf8_percent_encode(&url[..stop], URL_UNSAFE).to_string();
     enc.push_str(&url[stop..]);
-    let mut ptime = timestamp.to_string();
-    // surely there is a better way to do this?
-    ptime.truncate(ptime.trim_end_matches('0').len());
-    if ptime.is_empty() {
-        ptime.push('*');
-    }
+    let ptime = if timestamp == 0 {
+        "*".to_string()
+    } else {
+        format!("{:014}", timestamp)
+    };
     Some(Cow::Owned(format!("/web/{ptime}/{enc}")))
 }
 
