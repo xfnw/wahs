@@ -1,4 +1,5 @@
 use axum::http::HeaderValue;
+use brotli::reader::Decompressor as BrotliDecoder;
 use libflate::gzip::MultiDecoder;
 use std::{
     cmp::min,
@@ -41,8 +42,9 @@ impl Read for BodyExtract<'_> {
 enum ExtractLayer<'a> {
     Slice(&'a [u8]),
     Chunked(ChunkedExtract<'a>),
+    Brotli(BrotliExtract<'a>),
     Gzip(GzipExtract<'a>),
-    Zstd(ZstdExtract<'a>), // TODO: support brotli too?
+    Zstd(ZstdExtract<'a>),
 }
 
 impl ExtractLayer<'_> {
@@ -55,6 +57,7 @@ impl ExtractLayer<'_> {
         };
         match next {
             b"chunked" => Self::Chunked(ChunkedExtract::new(self)),
+            b"br" => Self::Brotli(BrotliExtract::new(self)),
             b"gzip" => Self::Gzip(GzipExtract::new(self)?),
             b"zstd" => Self::Zstd(ZstdExtract::new(self)?),
             // a content-encoding of "none" is not a thing that exists:
@@ -72,6 +75,7 @@ impl Read for ExtractLayer<'_> {
         match self {
             Self::Slice(l) => l.read(buf),
             Self::Chunked(l) => l.read(buf),
+            Self::Brotli(l) => l.read(buf),
             Self::Gzip(l) => l.read(buf),
             Self::Zstd(l) => l.read(buf),
         }
@@ -161,6 +165,26 @@ fn expect_eat(inp: &mut impl Read, expected: u8) -> Result<()> {
     }
 
     Ok(())
+}
+
+struct BrotliExtract<'a> {
+    // the brotli decompressor is significantly larger than the other ExtractLayer variants,
+    // so putting the box on the outside of it makes more sense
+    inner: Box<BrotliDecoder<ExtractLayer<'a>>>,
+}
+
+impl<'a> BrotliExtract<'a> {
+    fn new(inner: ExtractLayer<'a>) -> Self {
+        Self {
+            inner: Box::new(BrotliDecoder::new(inner, 4096)),
+        }
+    }
+}
+
+impl Read for BrotliExtract<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.inner.read(buf)
+    }
 }
 
 struct GzipExtract<'a> {
