@@ -17,6 +17,7 @@ lol_html = "2.7.0"
 libflate = "1"
 html-escape = "0.2.13"
 patricia_tree = "0.10.1"
+zstd = { version = "0.13.3", default-features = false }
 
 [[bin]]
 name = "gencdx"

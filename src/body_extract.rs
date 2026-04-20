@@ -2,8 +2,9 @@ use axum::http::HeaderValue;
 use libflate::gzip::MultiDecoder;
 use std::{
     cmp::min,
-    io::{Read, Result},
+    io::{BufReader, Read, Result},
 };
+use zstd::Decoder as ZstdDecoder;
 
 pub struct BodyExtract<'a> {
     inner: ExtractLayer<'a>,
@@ -41,7 +42,7 @@ enum ExtractLayer<'a> {
     Slice(&'a [u8]),
     Chunked(ChunkedExtract<'a>),
     Gzip(GzipExtract<'a>),
-    // TODO: support zstd and brotli too?
+    Zstd(ZstdExtract<'a>), // TODO: support brotli too?
 }
 
 impl ExtractLayer<'_> {
@@ -55,6 +56,7 @@ impl ExtractLayer<'_> {
         match next {
             b"chunked" => Self::Chunked(ChunkedExtract::new(self)),
             b"gzip" => Self::Gzip(GzipExtract::new(self)?),
+            b"zstd" => Self::Zstd(ZstdExtract::new(self)?),
             // a content-encoding of "none" is not a thing that exists:
             // https://www.iana.org/assignments/http-parameters/http-parameters.xhtml#content-coding
             // despite this, some sites still set it...
@@ -71,6 +73,7 @@ impl Read for ExtractLayer<'_> {
             Self::Slice(l) => l.read(buf),
             Self::Chunked(l) => l.read(buf),
             Self::Gzip(l) => l.read(buf),
+            Self::Zstd(l) => l.read(buf),
         }
     }
 }
@@ -173,6 +176,24 @@ impl<'a> GzipExtract<'a> {
 }
 
 impl Read for GzipExtract<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+struct ZstdExtract<'a> {
+    inner: ZstdDecoder<'static, BufReader<Box<ExtractLayer<'a>>>>,
+}
+
+impl<'a> ZstdExtract<'a> {
+    fn new(inner: ExtractLayer<'a>) -> Option<Self> {
+        Some(Self {
+            inner: ZstdDecoder::new(Box::new(inner)).ok()?,
+        })
+    }
+}
+
+impl Read for ZstdExtract<'_> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.inner.read(buf)
     }
