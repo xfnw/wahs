@@ -92,6 +92,7 @@ impl AppState {
         &self,
         req_url: &str,
         timestamp: u64,
+        flags: Flags,
     ) -> Result<WarcResponse, ResponseError> {
         let base_url = Url::parse(req_url).map_err(ResponseError::UrlParse)?;
         let loc = {
@@ -107,7 +108,7 @@ impl AppState {
                     .next()
                     .or_else(|| ts_map.range(..timestamp).next_back())
                 {
-                    let loc = mangle_url(None, base_url.as_str(), newt).unwrap();
+                    let loc = mangle_url(None, base_url.as_str(), newt, flags).unwrap();
                     let mut headers = HeaderMap::new();
                     headers.insert(
                         "location",
@@ -166,9 +167,11 @@ impl AppState {
         );
         headers.insert(
             "content-security-policy",
-            HeaderValue::from_static(
-                "default-src 'self' 'unsafe-eval' 'unsafe-inline' data: blob:",
-            ),
+            HeaderValue::from_static(if flags.block_javascript {
+                "default-src 'self' 'unsafe-inline' data: blob:; script-src 'none'"
+            } else {
+                "default-src 'self' 'unsafe-eval' 'unsafe-inline' data: blob:"
+            }),
         );
         headers.insert(
             "cross-origin-opener-policy",
@@ -187,7 +190,7 @@ impl AppState {
         if let Some(location) = headers
             .get("x-archive-orig-location")
             .and_then(|h| h.to_str().ok())
-            && let Some(mangled) = mangle_url(Some(&base_url), location, timestamp)
+            && let Some(mangled) = mangle_url(Some(&base_url), location, timestamp, flags)
         {
             headers.insert(
                 "location",
@@ -230,7 +233,7 @@ impl AppState {
 
             let mut output = vec![];
             let mut chunk = [0u8; 8192];
-            let mut rewriter = setup_rewrite(timestamp, &base_url, &mut output);
+            let mut rewriter = setup_rewrite(timestamp, flags, &base_url, &mut output);
 
             while let len @ 1.. = extractor
                 .read(&mut chunk)
@@ -273,6 +276,7 @@ impl AppState {
 
 fn setup_rewrite<'a>(
     timestamp: u64,
+    flags: Flags,
     base_url: &'a Url,
     output: &mut Vec<u8>,
 ) -> HtmlRewriter<'a, impl FnMut(&[u8])> {
@@ -284,7 +288,7 @@ fn setup_rewrite<'a>(
                         return Ok(());
                     };
                     let href = decode_html_entities(&href);
-                    let Some(url) = mangle_url(Some(base_url), &href, timestamp) else {
+                    let Some(url) = mangle_url(Some(base_url), &href, timestamp, flags) else {
                         return Ok(());
                     };
                     let url = encode_double_quoted_attribute(&url);
@@ -296,7 +300,7 @@ fn setup_rewrite<'a>(
                         return Ok(());
                     };
                     let src = decode_html_entities(&src);
-                    let Some(url) = mangle_url(Some(base_url), &src, timestamp) else {
+                    let Some(url) = mangle_url(Some(base_url), &src, timestamp, flags) else {
                         return Ok(());
                     };
                     let url = encode_double_quoted_attribute(&url);
@@ -314,11 +318,11 @@ fn setup_rewrite<'a>(
                         .map(|s| match s.split_once(' ') {
                             Some((s, r)) => format!(
                                 "{} {}",
-                                mangle_url(Some(base_url), s, timestamp)
+                                mangle_url(Some(base_url), s, timestamp, flags)
                                     .unwrap_or(Cow::Borrowed(s)),
                                 r
                             ),
-                            None => mangle_url(Some(base_url), &s, timestamp)
+                            None => mangle_url(Some(base_url), &s, timestamp, flags)
                                 .unwrap_or(Cow::Borrowed(&s))
                                 .to_string(),
                         })
@@ -332,7 +336,7 @@ fn setup_rewrite<'a>(
                     Ok(())
                 }),
                 element!("base[href]", move |el| {
-                    let Some(url) = mangle_url(Some(base_url), "", timestamp) else {
+                    let Some(url) = mangle_url(Some(base_url), "", timestamp, flags) else {
                         return Ok(());
                     };
                     let url = encode_double_quoted_attribute(&url);
@@ -374,7 +378,46 @@ fn extract_base(mut extractor: body_extract::BodyExtract) -> Option<String> {
     out
 }
 
-fn mangle_url<'a>(base: Option<&Url>, join: &'a str, timestamp: u64) -> Option<Cow<'a, str>> {
+#[derive(Debug, Clone, Copy)]
+struct Flags {
+    block_javascript: bool,
+}
+
+impl Flags {
+    fn new(inp: &str) -> Self {
+        let mut block_javascript = false;
+
+        for c in inp.chars() {
+            if c == 'j' {
+                block_javascript = true;
+            }
+        }
+
+        Self { block_javascript }
+    }
+
+    fn empty() -> Self {
+        Self {
+            block_javascript: false,
+        }
+    }
+}
+
+impl std::fmt::Display for Flags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.block_javascript {
+            write!(f, "j")?;
+        }
+        Ok(())
+    }
+}
+
+fn mangle_url<'a>(
+    base: Option<&Url>,
+    join: &'a str,
+    timestamp: u64,
+    flags: Flags,
+) -> Option<Cow<'a, str>> {
     let url = if let Some(base) = base {
         base.join(join).ok()
     } else {
@@ -392,15 +435,17 @@ fn mangle_url<'a>(base: Option<&Url>, join: &'a str, timestamp: u64) -> Option<C
     } else {
         format!("{:014}", timestamp)
     };
-    Some(Cow::Owned(format!("/web/{ptime}/{enc}")))
+    Some(Cow::Owned(format!("/web/{ptime}{flags}/{enc}")))
 }
 
-fn demangle(inp: &str) -> Option<(u64, Url)> {
+fn demangle(inp: &str) -> Option<(u64, Url, Flags)> {
     let mut split = inp.split('/');
     if split.next().is_none_or(|s| !s.is_empty()) || split.next().is_none_or(|s| s != "web") {
         return None;
     }
-    let timestamp = split.next().map(process_timestamp)?;
+    let timestamp = split.next()?;
+    let flags = Flags::new(timestamp);
+    let timestamp = process_timestamp(timestamp);
     let old: Vec<_> = split.collect();
     let old = old.join("/");
     let stop = old.find('?').unwrap_or(old.len());
@@ -410,7 +455,7 @@ fn demangle(inp: &str) -> Option<(u64, Url)> {
         .to_string();
     url.push_str(&old[stop..]);
     let url = Url::parse(&url).ok()?;
-    Some((timestamp, url))
+    Some((timestamp, url, flags))
 }
 
 fn read_warc_record(
@@ -593,8 +638,12 @@ async fn from_warc(
         requested_url.push('?');
         requested_url.push_str(&query);
     }
+    let flags = Flags::new(&timestamp);
     let timestamp = process_timestamp(&timestamp);
-    let response = match state.get_warc_response(&requested_url, timestamp).await {
+    let response = match state
+        .get_warc_response(&requested_url, timestamp, flags)
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             let mut headers = HeaderMap::new();
@@ -650,7 +699,7 @@ async fn search(
             .filter(|u| pos.iter().all(|w| u.contains(w)) && neg.iter().all(|w| !u.contains(w)))
             .take(1000)
         {
-            if let Some(mangled) = mangle_url(None, &res, 0) {
+            if let Some(mangled) = mangle_url(None, &res, 0, Flags::empty()) {
                 write!(
                     out,
                     "<li><a href=\"{}\">{}</a></li>",
@@ -674,11 +723,11 @@ async fn fallback(
     if let Some(refer) = headers.get("referer").and_then(|h| h.to_str().ok())
         && let Ok(refer) = Uri::from_str(refer)
         && let Some(refer) = refer.path_and_query().map(|p| p.as_str())
-        && let Some((timestamp, base)) = demangle(refer)
+        && let Some((timestamp, base, flags)) = demangle(refer)
         && let Some(join) = uri.path_and_query().map(|p| p.as_str())
         && let Ok(url) = base.join(join)
         && state.cdx_map.read().await.contains_key(url.as_str())
-        && let Some(mangled) = mangle_url(None, url.as_str(), timestamp)
+        && let Some(mangled) = mangle_url(None, url.as_str(), timestamp, flags)
         && let Ok(loc) = HeaderValue::from_str(&mangled)
     {
         let mut headers = HeaderMap::new();
