@@ -208,11 +208,12 @@ impl AppState {
         let ct = content_type
             .split_once(';')
             .map_or(content_type, |(s, _)| s);
-        // FIXME: treating xhtml like html is very naughty
-        // people are usually nice enough to make their xhtml
-        // html-compatible-ish tho
-        let body = if (ct.eq_ignore_ascii_case("text/html")
-            || ct.eq_ignore_ascii_case("application/xhtml+xml"))
+        let body = if !flags.disable_rewriting
+            // FIXME: treating xhtml like html is very naughty
+            // people are usually nice enough to make their xhtml
+            // html-compatible-ish tho
+            && (ct.eq_ignore_ascii_case("text/html")
+                || ct.eq_ignore_ascii_case("application/xhtml+xml"))
             && let Some(mut extractor) = body_extract::BodyExtract::new(
                 body,
                 headers.get("x-archive-orig-transfer-encoding"),
@@ -381,24 +382,32 @@ fn extract_base(mut extractor: body_extract::BodyExtract) -> Option<String> {
 #[derive(Debug, Clone, Copy)]
 struct Flags {
     block_javascript: bool,
+    disable_rewriting: bool,
 }
 
 impl Flags {
     fn new(inp: &str) -> Self {
         let mut block_javascript = false;
+        let mut disable_rewriting = false;
 
         for c in inp.chars() {
-            if c == 'j' {
-                block_javascript = true;
+            match c {
+                'j' => block_javascript = true,
+                'r' => disable_rewriting = true,
+                _ => (),
             }
         }
 
-        Self { block_javascript }
+        Self {
+            block_javascript,
+            disable_rewriting,
+        }
     }
 
     fn empty() -> Self {
         Self {
             block_javascript: false,
+            disable_rewriting: false,
         }
     }
 }
@@ -407,6 +416,9 @@ impl std::fmt::Display for Flags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.block_javascript {
             write!(f, "j")?;
+        }
+        if self.disable_rewriting {
+            write!(f, "r")?;
         }
         Ok(())
     }
