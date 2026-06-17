@@ -153,7 +153,7 @@ impl AppState {
         }
         headers.insert(
             "link",
-            HeaderValue::from_str(&format!("<{base_url}>; rel=original"))
+            HeaderValue::try_from(format!("<{base_url}>; rel=original"))
                 .map_err(ResponseError::HeaderBorked)?,
         );
         let content_type = headers
