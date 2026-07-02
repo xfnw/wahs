@@ -77,7 +77,7 @@ fn main() {
             };
             if record
                 .header(WarcHeader::WarcType)
-                .is_none_or(|h| h != "response")
+                .is_none_or(|h| !(h == "response" || h == "revisit"))
             {
                 continue;
             }
