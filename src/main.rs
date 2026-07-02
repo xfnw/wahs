@@ -780,6 +780,7 @@ async fn read_cdx(
         .find(|(_, c)| *c == "b")
         .ok_or("no `b` date column in header")?;
     let offset = header.clone().find(|(_, c)| *c == "V").map(|(o, _)| o);
+    let warc_type = header.clone().find(|(_, c)| *c == "T").map(|(o, _)| o);
     let (warcname, _) = header
         .find(|(_, c)| *c == "g")
         .ok_or("no `g` warc filename column in header")?;
@@ -798,6 +799,7 @@ async fn read_cdx(
             .and_then(|o| columns.get(o))
             .and_then(|o| o.parse().ok())
             .unwrap_or(0);
+        let warc_type = warc_type.and_then(|o| columns.get(o));
         let warcname = parent.join(warcname);
         let warcname = if let Some(w) = dedup.get(&warcname) {
             w.clone()
@@ -813,6 +815,11 @@ async fn read_cdx(
             map.insert(url, BTreeMap::new());
             map.get_mut(url).unwrap()
         };
+
+        if warc_type.is_some_and(|&t| t == "revisit") && inner.contains_key(&date) {
+            continue;
+        }
+
         inner.insert(
             date,
             WarcLocation {
