@@ -54,7 +54,7 @@ impl<T: Read> Read for LengthReader<'_, T> {
 }
 
 fn main() {
-    println!(" CDX a b m s k V g u");
+    println!(" CDX a b m s k V T g u");
 
     for filename in args().skip(1) {
         let last_member = Cell::new(0);
@@ -75,10 +75,10 @@ fn main() {
             let Ok(record) = record else {
                 continue;
             };
-            if record
-                .header(WarcHeader::WarcType)
-                .is_none_or(|h| !(h == "response" || h == "revisit"))
-            {
+            let Some(warc_type) = record.header(WarcHeader::WarcType) else {
+                continue;
+            };
+            if !(warc_type == "response" || warc_type == "revisit") {
                 continue;
             }
             let mut headers = [httparse::EMPTY_HEADER; 256];
@@ -116,12 +116,14 @@ fn main() {
             // V - file offset (before decompression)
             // should be uppercase, but rust is anal about naming
             let v = last_member.get();
+            // T - nonstandard, warc type
+            let t = warc_type;
             // g - file name
             let g = &filename;
-            // u - ??? missing from the cdx format reference, wget uses warc id
+            // u - nonstandard, warc id
             let u = record.warc_id();
 
-            println!("{a} {b} {m} {s} {k} {v} {g} {u}");
+            println!("{a} {b} {m} {s} {k} {v} {t} {g} {u}");
         }
     }
 }
