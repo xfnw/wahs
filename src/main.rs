@@ -486,12 +486,11 @@ fn read_warc_record(
     let tstr = timestamp.to_string();
     let mut stream_iter = file.stream_records();
     while let Some(Ok(record)) = stream_iter.next_item() {
-        if record
-            .header(WarcHeader::WarcType)
-            .is_none_or(|t| t != "response")
-        {
-            continue;
-        }
+        let is_revisit = match record.header(WarcHeader::WarcType).as_deref() {
+            Some("response") => false,
+            Some("revisit") => true,
+            _ => continue,
+        };
         let Some(target) = record.header(WarcHeader::TargetURI) else {
             continue;
         };
@@ -502,6 +501,9 @@ fn read_warc_record(
         }
         if record.date().format("%Y%m%d%H%M%S").to_string() != tstr {
             continue;
+        }
+        if is_revisit {
+            return Err(ResponseError::Revisit);
         }
         return record
             .into_buffered()
@@ -531,6 +533,7 @@ enum ResponseError {
     HeaderBorked(axum::http::header::InvalidHeaderValue),
     ExtractBody(std::io::Error),
     UnsupportedEncoding,
+    Revisit,
 }
 
 impl fmt::Display for ResponseError {
@@ -604,6 +607,11 @@ impl fmt::Display for ResponseError {
                 f,
                 "<h1>unsupported transfer-encoding</h1>
 <p>transfer-encoding is not nice</p>",
+            ),
+            Self::Revisit => write!(
+                f,
+                "<h1>revisit warc records are not supported yet</h1>
+<p>see <a href=https://github.com/xfnw/wahs/issues/1>the github issue</a></p>",
             ),
         }
     }
