@@ -6,6 +6,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
 };
+use chrono::{DateTime, Utc};
 use html_escape::{decode_html_entities, encode_double_quoted_attribute, encode_text};
 use libflate::gzip::MultiDecoder as GzipReader;
 use lol_html::{HtmlRewriter, element};
@@ -125,17 +126,21 @@ impl AppState {
         };
         let warc_path = loc.path.clone();
 
-        let buffered = {
+        let record = {
             let req_url = base_url.to_string();
             spawn_blocking(move || read_warc_record(&req_url, &loc, timestamp))
                 .await
                 .map_err(ResponseError::TokioJoin)??
         };
 
-        let response = buffered.body();
+        let warc_body = match &record {
+            WarcRecord::Response(buffered) => buffered,
+            WarcRecord::RevisitPayload { body_headers, .. } => body_headers,
+        };
+        let warc_body = warc_body.body();
         let mut headers = [httparse::EMPTY_HEADER; 256];
         let mut res = httparse::Response::new(&mut headers);
-        let Ok(httparse::Status::Complete(body_offset)) = res.parse(response) else {
+        let Ok(httparse::Status::Complete(body_offset)) = res.parse(warc_body) else {
             return Err(ResponseError::HttpParse);
         };
 
@@ -203,7 +208,47 @@ impl AppState {
             .to_str()
             .unwrap_or("application/octet-stream");
 
-        let body = &response[body_offset..];
+        let referenced_record = match &record {
+            WarcRecord::Response(_) => None,
+            WarcRecord::RevisitPayload {
+                payload_target_uri,
+                payload_timestamp,
+                ..
+            } => {
+                let loc = {
+                    let cdx_map = self.cdx_map.read().await;
+                    cdx_map
+                        .get(payload_target_uri)
+                        .and_then(|ts_map| ts_map.get(payload_timestamp))
+                        .ok_or(ResponseError::RevisitNotFound)?
+                        .clone()
+                };
+                let referenced_record = {
+                    let payload_target_uri = payload_target_uri.clone();
+                    let payload_timestamp = *payload_timestamp;
+                    spawn_blocking(move || {
+                        read_warc_record(&payload_target_uri, &loc, payload_timestamp)
+                    })
+                    .await
+                    .map_err(ResponseError::TokioJoin)??
+                };
+                let WarcRecord::Response(referenced_record) = referenced_record else {
+                    return Err(ResponseError::RevisitNonResponse);
+                };
+                Some(referenced_record)
+            }
+        };
+        let body = match &record {
+            WarcRecord::Response(_) => &warc_body[body_offset..],
+            WarcRecord::RevisitPayload { .. } => {
+                let referenced_body = referenced_record.as_ref().unwrap();
+                let referenced_body = referenced_body.body();
+                let Ok(httparse::Status::Complete(body_offset)) = res.parse(referenced_body) else {
+                    return Err(ResponseError::HttpParse);
+                };
+                &referenced_body[body_offset..]
+            }
+        };
 
         let ct = content_type
             .split_once(';')
@@ -470,11 +515,20 @@ fn demangle(inp: &str) -> Option<(u64, Url, Flags)> {
     Some((timestamp, url, flags))
 }
 
+enum WarcRecord {
+    Response(warc::Record<warc::BufferedBody>),
+    RevisitPayload {
+        body_headers: warc::Record<warc::BufferedBody>,
+        payload_target_uri: String,
+        payload_timestamp: u64,
+    },
+}
+
 fn read_warc_record(
     req_url: &str,
     location: &WarcLocation,
     timestamp: u64,
-) -> Result<warc::Record<warc::BufferedBody>, ResponseError> {
+) -> Result<WarcRecord, ResponseError> {
     let mut file = std::fs::File::open(location.path.as_ref())
         .map_err(|e| ResponseError::OpenWarc(e, format!("{:?}", location.path)))?;
     file.seek(std::io::SeekFrom::Start(location.offset))
@@ -503,11 +557,39 @@ fn read_warc_record(
             continue;
         }
         if is_revisit {
-            return Err(ResponseError::Revisit);
+            return match record.header(WarcHeader::from("WARC-Profile")).as_deref() {
+                Some("http://netpreserve.org/warc/1.0/revisit/identical-payload-digest") => {
+                    let payload_target_uri = record
+                        .header(WarcHeader::from("WARC-Refers-To-Target-URI"))
+                        .ok_or(ResponseError::RevisitHeader("WARC-Refers-To-Target-URI"))?
+                        .to_string();
+
+                    let payload_timestamp = record
+                        .header(WarcHeader::from("WARC-Refers-To-Date"))
+                        .and_then(|d| DateTime::parse_from_rfc3339(&d).ok())
+                        .map(DateTime::<Utc>::from)
+                        .map(|d| d.format("%Y%m%d%H%M%S"))
+                        .map(|d| d.to_string().parse().unwrap())
+                        .ok_or(ResponseError::RevisitHeader("WARC-Refers-To-Date"))?;
+
+                    let body_headers = record.into_buffered().map_err(|e| {
+                        ResponseError::RecordBody(e, format!("{:?}", location.path))
+                    })?;
+
+                    Ok(WarcRecord::RevisitPayload {
+                        body_headers,
+                        payload_target_uri,
+                        payload_timestamp,
+                    })
+                }
+                Some(profile) => Err(ResponseError::RevisitProfile(profile.to_string())),
+                None => Err(ResponseError::RevisitProfile("header missing".to_string())),
+            };
         }
         return record
             .into_buffered()
-            .map_err(|e| ResponseError::RecordBody(e, format!("{:?}", location.path)));
+            .map_err(|e| ResponseError::RecordBody(e, format!("{:?}", location.path)))
+            .map(WarcRecord::Response);
     }
 
     Err(ResponseError::WarcMissing(format!("{:?}", location.path)))
@@ -533,7 +615,10 @@ enum ResponseError {
     HeaderBorked(axum::http::header::InvalidHeaderValue),
     ExtractBody(std::io::Error),
     UnsupportedEncoding,
-    Revisit,
+    RevisitProfile(String),
+    RevisitHeader(&'static str),
+    RevisitNotFound,
+    RevisitNonResponse,
 }
 
 impl fmt::Display for ResponseError {
@@ -608,10 +693,27 @@ impl fmt::Display for ResponseError {
                 "<h1>unsupported transfer-encoding</h1>
 <p>transfer-encoding is not nice</p>",
             ),
-            Self::Revisit => write!(
+            Self::RevisitProfile(profile) => write!(
                 f,
-                "<h1>revisit warc records are not supported yet</h1>
-<p>see <a href=https://github.com/xfnw/wahs/issues/1>the github issue</a></p>",
+                "<h1>unknown revisit profile</h1>
+<p>WARC-Profile {}</p>",
+                encode_text(profile),
+            ),
+            Self::RevisitHeader(header_name) => write!(
+                f,
+                "<h1>missing header in revisit</h1>
+<p>the {} warc header is borked</p>",
+                encode_text(header_name)
+            ),
+            Self::RevisitNotFound => write!(
+                f,
+                "<h1>warc record referenced by revisit not found</h1>
+<p>is it in the cdx files?</p>",
+            ),
+            Self::RevisitNonResponse => write!(
+                f,
+                "<h1>warc record referenced by revisit not a response</h1>
+<p>do you have a different record with the same uri+timestamp?</p>",
             ),
         }
     }
