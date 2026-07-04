@@ -202,11 +202,6 @@ impl AppState {
                 HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
             );
         }
-        let content_type = headers
-            .get("content-type")
-            .expect("we just added it lol")
-            .to_str()
-            .unwrap_or("application/octet-stream");
 
         let referenced_record;
         let body = match &record {
@@ -224,6 +219,9 @@ impl AppState {
                         .ok_or(ResponseError::RevisitNotFound)?
                         .clone()
                 };
+                if let Ok(h) = HeaderValue::from_bytes(loc.path.as_os_str().as_bytes()) {
+                    headers.insert("x-archive-src-revisits", h);
+                }
                 let referenced_rec = {
                     let payload_target_uri = payload_target_uri.clone();
                     let payload_timestamp = *payload_timestamp;
@@ -245,6 +243,11 @@ impl AppState {
             }
         };
 
+        let content_type = headers
+            .get("content-type")
+            .expect("we just added it lol")
+            .to_str()
+            .unwrap_or("application/octet-stream");
         let ct = content_type
             .split_once(';')
             .map_or(content_type, |(s, _)| s);
