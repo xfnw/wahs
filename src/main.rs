@@ -208,8 +208,9 @@ impl AppState {
             .to_str()
             .unwrap_or("application/octet-stream");
 
-        let referenced_record = match &record {
-            WarcRecord::Response(_) => None,
+        let referenced_record;
+        let body = match &record {
+            WarcRecord::Response(_) => &warc_body[body_offset..],
             WarcRecord::RevisitPayload {
                 payload_target_uri,
                 payload_timestamp,
@@ -223,7 +224,7 @@ impl AppState {
                         .ok_or(ResponseError::RevisitNotFound)?
                         .clone()
                 };
-                let referenced_record = {
+                let referenced_rec = {
                     let payload_target_uri = payload_target_uri.clone();
                     let payload_timestamp = *payload_timestamp;
                     spawn_blocking(move || {
@@ -232,17 +233,11 @@ impl AppState {
                     .await
                     .map_err(ResponseError::TokioJoin)??
                 };
-                let WarcRecord::Response(referenced_record) = referenced_record else {
+                let WarcRecord::Response(referenced_rec) = referenced_rec else {
                     return Err(ResponseError::RevisitNonResponse);
                 };
-                Some(referenced_record)
-            }
-        };
-        let body = match &record {
-            WarcRecord::Response(_) => &warc_body[body_offset..],
-            WarcRecord::RevisitPayload { .. } => {
-                let referenced_body = referenced_record.as_ref().unwrap();
-                let referenced_body = referenced_body.body();
+                referenced_record = referenced_rec;
+                let referenced_body = referenced_record.body();
                 let Ok(httparse::Status::Complete(body_offset)) = res.parse(referenced_body) else {
                     return Err(ResponseError::HttpParse);
                 };
