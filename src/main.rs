@@ -211,37 +211,9 @@ impl AppState {
                 payload_timestamp,
                 ..
             } => {
-                let loc = {
-                    let cdx_map = self.cdx_map.read().await;
-                    cdx_map
-                        .get(payload_target_uri)
-                        .and_then(|ts_map| ts_map.get(payload_timestamp))
-                        .ok_or_else(|| {
-                            ResponseError::RevisitNotFound(
-                                payload_target_uri.clone(),
-                                *payload_timestamp,
-                            )
-                        })?
-                        .clone()
-                };
-                if let Ok(h) = HeaderValue::from_bytes(loc.path.as_os_str().as_bytes()) {
-                    headers.insert("x-archive-src-revisits", h);
-                }
-                let referenced_rec = {
-                    let payload_target_uri = payload_target_uri.clone();
-                    let payload_timestamp = *payload_timestamp;
-                    spawn_blocking(move || {
-                        read_warc_record(&payload_target_uri, &loc, payload_timestamp)
-                    })
-                    .await
-                    .map_err(ResponseError::TokioJoin)??
-                };
-                let WarcRecord::Response(referenced_rec) = referenced_rec else {
-                    return Err(ResponseError::RevisitNonResponse(
-                        payload_target_uri.clone(),
-                        *payload_timestamp,
-                    ));
-                };
+                let referenced_rec = self
+                    .get_revisit_payload(&mut headers, payload_target_uri, payload_timestamp)
+                    .await?;
                 referenced_record = referenced_rec;
                 let referenced_body = referenced_record.body();
                 let Ok(httparse::Status::Complete(body_offset)) = res.parse(referenced_body) else {
@@ -258,6 +230,41 @@ impl AppState {
             headers,
             body,
         })
+    }
+
+    async fn get_revisit_payload(
+        &self,
+        headers: &mut HeaderMap,
+        payload_target_uri: &String,
+        payload_timestamp: &u64,
+    ) -> Result<warc::Record<warc::BufferedBody>, ResponseError> {
+        let loc = {
+            let cdx_map = self.cdx_map.read().await;
+            cdx_map
+                .get(payload_target_uri)
+                .and_then(|ts_map| ts_map.get(payload_timestamp))
+                .ok_or_else(|| {
+                    ResponseError::RevisitNotFound(payload_target_uri.clone(), *payload_timestamp)
+                })?
+                .clone()
+        };
+        if let Ok(h) = HeaderValue::from_bytes(loc.path.as_os_str().as_bytes()) {
+            headers.insert("x-archive-src-revisits", h);
+        }
+        let referenced_rec = {
+            let payload_target_uri = payload_target_uri.clone();
+            let payload_timestamp = *payload_timestamp;
+            spawn_blocking(move || read_warc_record(&payload_target_uri, &loc, payload_timestamp))
+                .await
+                .map_err(ResponseError::TokioJoin)??
+        };
+        let WarcRecord::Response(referenced_rec) = referenced_rec else {
+            return Err(ResponseError::RevisitNonResponse(
+                payload_target_uri.clone(),
+                *payload_timestamp,
+            ));
+        };
+        Ok(referenced_rec)
     }
 }
 
