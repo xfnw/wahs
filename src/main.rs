@@ -153,55 +153,7 @@ impl AppState {
                 );
             }
         }
-        if let Ok(h) = HeaderValue::from_bytes(warc_path.as_os_str().as_bytes()) {
-            headers.insert("x-archive-src", h);
-        }
-        headers.insert(
-            "link",
-            HeaderValue::try_from(format!("<{base_url}>; rel=original"))
-                .map_err(ResponseError::HeaderBorked)?,
-        );
-        let content_type = headers
-            .get("x-archive-orig-content-type")
-            .cloned()
-            .unwrap_or(HeaderValue::from_static("text/html"));
-        headers.insert("content-type", content_type);
-        headers.insert(
-            "cache-control",
-            HeaderValue::from_static("public, max-age=604800, immutable"),
-        );
-        headers.insert(
-            "content-security-policy",
-            HeaderValue::from_static(if flags.block_javascript {
-                "default-src 'self' 'unsafe-inline' data: blob:; script-src 'none'"
-            } else {
-                "default-src 'self' 'unsafe-eval' 'unsafe-inline' data: blob:"
-            }),
-        );
-        headers.insert(
-            "cross-origin-opener-policy",
-            HeaderValue::from_static("same-origin"),
-        );
-        headers.insert(
-            "cross-origin-resource-policy",
-            HeaderValue::from_static("cross-origin"),
-        );
-        headers.insert(
-            "cross-origin-embedder-policy",
-            HeaderValue::from_static("require-corp"),
-        );
-        headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
-        headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
-        if let Some(location) = headers
-            .get("x-archive-orig-location")
-            .and_then(|h| h.to_str().ok())
-            && let Some(mangled) = mangle_url(Some(&base_url), location, timestamp, flags)
-        {
-            headers.insert(
-                "location",
-                HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
-            );
-        }
+        add_headers(timestamp, flags, &base_url, &warc_path, &mut headers)?;
 
         let referenced_record;
         let body = match &record {
@@ -266,6 +218,65 @@ impl AppState {
         };
         Ok(referenced_rec)
     }
+}
+
+fn add_headers(
+    timestamp: u64,
+    flags: Flags,
+    base_url: &Url,
+    warc_path: &Path,
+    headers: &mut HeaderMap,
+) -> Result<(), ResponseError> {
+    if let Ok(h) = HeaderValue::from_bytes(warc_path.as_os_str().as_bytes()) {
+        headers.insert("x-archive-src", h);
+    }
+    headers.insert(
+        "link",
+        HeaderValue::try_from(format!("<{base_url}>; rel=original"))
+            .map_err(ResponseError::HeaderBorked)?,
+    );
+    let content_type = headers
+        .get("x-archive-orig-content-type")
+        .cloned()
+        .unwrap_or(HeaderValue::from_static("text/html"));
+    headers.insert("content-type", content_type);
+    if let Some(location) = headers
+        .get("x-archive-orig-location")
+        .and_then(|h| h.to_str().ok())
+        && let Some(mangled) = mangle_url(Some(base_url), location, timestamp, flags)
+    {
+        headers.insert(
+            "location",
+            HeaderValue::from_str(&mangled).map_err(ResponseError::HeaderBorked)?,
+        );
+    }
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_static(if flags.block_javascript {
+            "default-src 'self' 'unsafe-inline' data: blob:; script-src 'none'"
+        } else {
+            "default-src 'self' 'unsafe-eval' 'unsafe-inline' data: blob:"
+        }),
+    );
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=604800, immutable"),
+    );
+    headers.insert(
+        "cross-origin-opener-policy",
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        "cross-origin-resource-policy",
+        HeaderValue::from_static("cross-origin"),
+    );
+    headers.insert(
+        "cross-origin-embedder-policy",
+        HeaderValue::from_static("require-corp"),
+    );
+    headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
+    headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
+    Ok(())
 }
 
 fn rewrite_body(
