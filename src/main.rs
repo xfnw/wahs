@@ -2,7 +2,7 @@ use argh::FromArgs;
 use axum::{
     Router,
     extract::{Path as PathExtract, Query, RawQuery, State},
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri, uri::PathAndQuery},
     response::{Html, IntoResponse},
     routing::get,
 };
@@ -852,9 +852,9 @@ async fn fallback(
 ) -> Result<(StatusCode, HeaderMap), StatusCode> {
     if let Some(refer) = headers.get("referer").and_then(|h| h.to_str().ok())
         && let Ok(refer) = Uri::from_str(refer)
-        && let Some(refer) = refer.path_and_query().map(|p| p.as_str())
+        && let Some(refer) = refer.path_and_query().map(PathAndQuery::as_str)
         && let Some((timestamp, base, flags)) = demangle(refer)
-        && let Some(join) = uri.path_and_query().map(|p| p.as_str())
+        && let Some(join) = uri.path_and_query().map(PathAndQuery::as_str)
         && let Ok(url) = base.join(join)
         && state.cdx_map.read().await.contains_key(url.as_str())
         && let Some(mangled) = mangle_url(None, url.as_str(), timestamp, flags)
