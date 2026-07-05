@@ -53,6 +53,7 @@ impl<T: Read> Read for LengthReader<'_, T> {
     }
 }
 
+#[expect(clippy::many_single_char_names)]
 fn main() {
     println!(" CDX a b m s k V T g u");
 
