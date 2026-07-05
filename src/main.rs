@@ -218,7 +218,7 @@ impl AppState {
                         .and_then(|ts_map| ts_map.get(payload_timestamp))
                         .ok_or_else(|| {
                             ResponseError::RevisitNotFound(
-                                payload_target_uri.to_string(),
+                                payload_target_uri.clone(),
                                 *payload_timestamp,
                             )
                         })?
@@ -238,7 +238,7 @@ impl AppState {
                 };
                 let WarcRecord::Response(referenced_rec) = referenced_rec else {
                     return Err(ResponseError::RevisitNonResponse(
-                        payload_target_uri.to_string(),
+                        payload_target_uri.clone(),
                         *payload_timestamp,
                     ));
                 };
