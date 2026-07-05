@@ -496,7 +496,7 @@ fn mangle_url<'a>(
     let ptime = if timestamp == 0 {
         "*".to_string()
     } else {
-        format!("{:014}", timestamp)
+        format!("{timestamp:014}")
     };
     Some(Cow::Owned(format!("/web/{ptime}{flags}/{enc}")))
 }
