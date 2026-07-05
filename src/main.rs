@@ -251,72 +251,7 @@ impl AppState {
             }
         };
 
-        let content_type = headers
-            .get("content-type")
-            .expect("we just added it lol")
-            .to_str()
-            .unwrap_or("application/octet-stream");
-        let ct = content_type
-            .split_once(';')
-            .map_or(content_type, |(s, _)| s);
-        let body = if !flags.disable_rewriting
-            // FIXME: treating xhtml like html is very naughty
-            // people are usually nice enough to make their xhtml
-            // html-compatible-ish tho
-            && (ct.eq_ignore_ascii_case("text/html")
-                || ct.eq_ignore_ascii_case("application/xhtml+xml"))
-            && let Some(mut extractor) = body_extract::BodyExtract::new(
-                body,
-                headers.get("x-archive-orig-transfer-encoding"),
-                headers.get("x-archive-orig-content-encoding"),
-            ) {
-            // grumble grumble libflate stuff not implementing Clone
-            let extra_extractor = body_extract::BodyExtract::new(
-                body,
-                headers.get("x-archive-orig-transfer-encoding"),
-                headers.get("x-archive-orig-content-encoding"),
-            )
-            .unwrap();
-            let tag_base = extract_base(extra_extractor);
-            let base_url = tag_base
-                .as_ref()
-                .and_then(|t| base_url.join(t).ok())
-                .unwrap_or(base_url);
-
-            let mut output = vec![];
-            let mut chunk = [0u8; 8192];
-            let mut rewriter = setup_rewrite(timestamp, flags, &base_url, &mut output);
-
-            while let len @ 1.. = extractor
-                .read(&mut chunk)
-                .map_err(ResponseError::ExtractBody)?
-            {
-                rewriter
-                    .write(&chunk[..len])
-                    .map_err(ResponseError::RewriteHtml)?;
-            }
-
-            rewriter.end().map_err(ResponseError::RewriteHtml)?;
-            output
-        } else if let Some(mut extractor) = body_extract::BodyExtract::new(
-            body,
-            headers.get("x-archive-orig-transfer-encoding"),
-            // do not bother undoing the content encoding, we can just
-            // sent it out as is, (unlike the transfer encoding where
-            // that can make axum panic >:( )
-            None,
-        ) {
-            if let Some(encoding) = headers.get("x-archive-orig-content-encoding") {
-                headers.insert("content-encoding", encoding.clone());
-            }
-            let mut output = vec![];
-            extractor
-                .read_to_end(&mut output)
-                .map_err(ResponseError::ExtractBody)?;
-            output
-        } else {
-            return Err(ResponseError::UnsupportedEncoding);
-        };
+        let body = rewrite_body(timestamp, flags, base_url, &mut headers, body)?;
 
         Ok(WarcResponse {
             code: res.code.unwrap_or(200),
@@ -324,6 +259,82 @@ impl AppState {
             body,
         })
     }
+}
+
+fn rewrite_body(
+    timestamp: u64,
+    flags: Flags,
+    base_url: Url,
+    headers: &mut HeaderMap,
+    body: &[u8],
+) -> Result<Vec<u8>, ResponseError> {
+    let content_type = headers
+        .get("content-type")
+        .expect("we just added it lol")
+        .to_str()
+        .unwrap_or("application/octet-stream");
+    let ct = content_type
+        .split_once(';')
+        .map_or(content_type, |(s, _)| s);
+    let body = if !flags.disable_rewriting
+        // FIXME: treating xhtml like html is very naughty
+        // people are usually nice enough to make their xhtml
+        // html-compatible-ish tho
+        && (ct.eq_ignore_ascii_case("text/html")
+            || ct.eq_ignore_ascii_case("application/xhtml+xml"))
+        && let Some(mut extractor) = body_extract::BodyExtract::new(
+            body,
+            headers.get("x-archive-orig-transfer-encoding"),
+            headers.get("x-archive-orig-content-encoding"),
+        ) {
+        // grumble grumble libflate stuff not implementing Clone
+        let extra_extractor = body_extract::BodyExtract::new(
+            body,
+            headers.get("x-archive-orig-transfer-encoding"),
+            headers.get("x-archive-orig-content-encoding"),
+        )
+        .unwrap();
+        let tag_base = extract_base(extra_extractor);
+        let base_url = tag_base
+            .as_ref()
+            .and_then(|t| base_url.join(t).ok())
+            .unwrap_or(base_url);
+
+        let mut output = vec![];
+        let mut chunk = [0u8; 8192];
+        let mut rewriter = setup_rewrite(timestamp, flags, &base_url, &mut output);
+
+        while let len @ 1.. = extractor
+            .read(&mut chunk)
+            .map_err(ResponseError::ExtractBody)?
+        {
+            rewriter
+                .write(&chunk[..len])
+                .map_err(ResponseError::RewriteHtml)?;
+        }
+
+        rewriter.end().map_err(ResponseError::RewriteHtml)?;
+        output
+    } else if let Some(mut extractor) = body_extract::BodyExtract::new(
+        body,
+        headers.get("x-archive-orig-transfer-encoding"),
+        // do not bother undoing the content encoding, we can just
+        // sent it out as is, (unlike the transfer encoding where
+        // that can make axum panic >:( )
+        None,
+    ) {
+        if let Some(encoding) = headers.get("x-archive-orig-content-encoding") {
+            headers.insert("content-encoding", encoding.clone());
+        }
+        let mut output = vec![];
+        extractor
+            .read_to_end(&mut output)
+            .map_err(ResponseError::ExtractBody)?;
+        output
+    } else {
+        return Err(ResponseError::UnsupportedEncoding);
+    };
+    Ok(body)
 }
 
 fn setup_rewrite<'a>(
