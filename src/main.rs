@@ -216,7 +216,12 @@ impl AppState {
                     cdx_map
                         .get(payload_target_uri)
                         .and_then(|ts_map| ts_map.get(payload_timestamp))
-                        .ok_or(ResponseError::RevisitNotFound)?
+                        .ok_or_else(|| {
+                            ResponseError::RevisitNotFound(
+                                payload_target_uri.to_string(),
+                                *payload_timestamp,
+                            )
+                        })?
                         .clone()
                 };
                 if let Ok(h) = HeaderValue::from_bytes(loc.path.as_os_str().as_bytes()) {
@@ -232,7 +237,10 @@ impl AppState {
                     .map_err(ResponseError::TokioJoin)??
                 };
                 let WarcRecord::Response(referenced_rec) = referenced_rec else {
-                    return Err(ResponseError::RevisitNonResponse);
+                    return Err(ResponseError::RevisitNonResponse(
+                        payload_target_uri.to_string(),
+                        *payload_timestamp,
+                    ));
                 };
                 referenced_record = referenced_rec;
                 let referenced_body = referenced_record.body();
@@ -615,8 +623,8 @@ enum ResponseError {
     UnsupportedEncoding,
     RevisitProfile(String),
     RevisitHeader(&'static str),
-    RevisitNotFound,
-    RevisitNonResponse,
+    RevisitNotFound(String, u64),
+    RevisitNonResponse(String, u64),
 }
 
 impl fmt::Display for ResponseError {
@@ -703,15 +711,17 @@ impl fmt::Display for ResponseError {
 <p>the {} warc header is borked</p>",
                 encode_text(header_name)
             ),
-            Self::RevisitNotFound => write!(
+            Self::RevisitNotFound(uri, timestamp) => write!(
                 f,
                 "<h1>warc record referenced by revisit not found</h1>
-<p>is it in the cdx files?</p>",
+<p>is {} on {timestamp} in the cdx files?</p>",
+                encode_text(uri)
             ),
-            Self::RevisitNonResponse => write!(
+            Self::RevisitNonResponse(uri, timestamp) => write!(
                 f,
                 "<h1>warc record referenced by revisit not a response</h1>
-<p>do you have a different record with the same uri+timestamp?</p>",
+<p>do you have a different record with the same uri+timestamp as {} on {timestamp}?</p>",
+                encode_text(uri)
             ),
         }
     }
