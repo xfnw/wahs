@@ -484,7 +484,7 @@ impl Flags {
         }
     }
 
-    fn empty() -> Self {
+    const fn empty() -> Self {
         Self {
             block_javascript: false,
             disable_rewriting: false,
