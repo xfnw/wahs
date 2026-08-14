@@ -168,6 +168,8 @@ impl AppState {
                     .await?;
                 referenced_record = referenced_rec;
                 let referenced_body = referenced_record.body();
+                let mut headers = [httparse::EMPTY_HEADER; 256];
+                let mut res = httparse::Response::new(&mut headers);
                 let Ok(httparse::Status::Complete(body_offset)) = res.parse(referenced_body) else {
                     return Err(ResponseError::HttpParse);
                 };
