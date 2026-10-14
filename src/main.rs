@@ -837,7 +837,7 @@ async fn search(
 <label>search <input name=q onfocus=this.select() "
         .to_string();
     if let Some(query) = query {
-        write!(out, "value=\"{}\"", &encode_double_quoted_attribute(query)).unwrap();
+        write!(out, "value=\"{}\"", encode_double_quoted_attribute(query)).unwrap();
     } else {
         out.push_str("autofocus");
     }
