@@ -17,8 +17,8 @@ lol_html = "2.7.0"
 libflate = "1"
 html-escape = "0.2.13"
 patricia_tree = "0.10.1"
-zstd = { version = "0.13.3", default-features = false }
-brotli = "8.0.2"
+zstd = { version = "0.14", default-features = false }
+brotli = "9"
 chrono = "0.4.40"
 
 [[bin]]
