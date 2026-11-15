@@ -915,8 +915,11 @@ async fn read_cdx(
     let Ok(Some(header)) = lines.next_line().await else {
         return Err("could not read cdx header");
     };
+    let Some(delimiter) = header.chars().next() else {
+        return Err("cdx header missing delimiter");
+    };
     let mut header = header
-        .split(' ')
+        .split(delimiter)
         .skip_while(|&s| s != "CDX")
         .skip(1)
         .enumerate();
@@ -939,7 +942,7 @@ async fn read_cdx(
         .await
         .map_err(|_| "bork while reading line")?
     {
-        let columns: Vec<_> = line.split(' ').collect();
+        let columns: Vec<_> = line.split(delimiter).collect();
         let &url = columns.get(url).ok_or("url field missing")?;
         let date = columns.get(date).ok_or("date field missing")?;
         let date = date.parse().map_err(|_| "malformed date")?;
